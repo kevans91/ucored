@@ -1,0 +1,20 @@
+#!/bin/sh
+#
+# $FreeBSD$
+#
+
+# PROVIDE: ucored
+# REQUIRE: FILESYSTEMS syslogd
+# KEYWORD: nojail shutdown
+
+. /etc/rc.subr
+
+name="ucored"
+desc="user core filtering and transport daemon"
+rcvar="ucored_enable"
+command="/usr/local/sbin/${name}"
+
+load_rc_config $name
+pidfile="${ucored_pidfile:-/var/run/ucored.pid}"
+command_args="-p ${pidfile}"
+run_rc_command "$1"
