@@ -37,7 +37,7 @@ enum ucore_data_type {
 
 struct ucore_data_hdr {
 	enum ucore_data_type	uhdr_type;
-	size_t			uhdr_size;
+	size_t			uhdr_size;	/* Payload size */
 };
 
 struct ucore_data {
