@@ -43,7 +43,8 @@ usage(void)
  * send that along.
  */
 static char *
-resolve_path(int jid, const char *core, char *ojailpath, char *ojailname)
+resolve_path(int jid, int pid, const char *comm, const char *core,
+    char *ojailpath, char *ojailname)
 {
 	char *corepath;
 	char strjid[16];
@@ -55,7 +56,9 @@ resolve_path(int jid, const char *core, char *ojailpath, char *ojailname)
 
 	if (jail_getv(0, "jid", strjid, "path", ojailpath,
 	    "name", ojailname, NULL) == -1) {
-		syslog(LOG_ERR, "jid %s seems to have disappeared", strjid);
+		syslog(LOG_ERR,
+		    "%s: jid %s for %s[pid=%d] seems to have disappeared",
+		    core, strjid, comm, pid);
 		exit(1);
 	}
 
@@ -248,11 +251,6 @@ main(int argc, char *argv[])
 	argc -= optind;
 	argv += optind;
 
-	if (jail != NULL && (jid = jail_getid(jail)) == -1) {
-		syslog(LOG_ERR, "jail_getid: %m");
-		return (1);
-	}
-
 	if (argc < 2) {
 		syslog(LOG_ERR, "Missing command or core path");
 		return (1);
@@ -261,7 +259,18 @@ main(int argc, char *argv[])
 	comm = argv[0];
 	core = argv[1];
 
-	corepath = resolve_path(jid, core, &jailpath[0], &jailname[0]);
+	syslog(LOG_INFO,
+	    "%s: notification received for jail %s, process %s[pid=%d]",
+	    core, jail, comm, pid);
+	if (jail != NULL && (jid = jail_getid(jail)) == -1) {
+		syslog(LOG_ERR,
+		    "%s: jail %s for %s[pid=%d] seems to have disappeared",
+		    core, jail, comm, pid);
+		return (1);
+	}
+
+	corepath = resolve_path(jid, pid, comm, core, &jailpath[0],
+	    &jailname[0]);
 	if (corepath == NULL) {
 		syslog(LOG_ERR, "resolve_path: %m");
 		return (1);
