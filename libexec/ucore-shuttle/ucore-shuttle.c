@@ -162,7 +162,7 @@ ucored_send_data(int ucored, const void *payload, size_t payloadsz)
 }
 
 static int
-ucored_send(int ucored, int ppid, int pid, int signo)
+ucored_send(int ucored, int jid, int ppid, int pid, int signo)
 {
 	struct ucore_shuttle_data *sd;
 	struct ucore uc = { 0 };
@@ -170,6 +170,7 @@ ucored_send(int ucored, int ppid, int pid, int signo)
 	assert(sd_nsegments != 0);
 	memcpy(&uc.ucore_magic[0], UCORE_MAGIC, sizeof(uc.ucore_magic));
 	uc.ucore_datasegs = sd_nsegments;
+	uc.ucore_jid = jid;
 	uc.ucore_ppid = ppid;
 	uc.ucore_pid = pid;
 	uc.ucore_signo = signo;
@@ -288,7 +289,7 @@ main(int argc, char *argv[])
 			goto out;
 	}
 
-	error = ucored_send(ucored, ppid, pid, signo);
+	error = ucored_send(ucored, jid, ppid, pid, signo);
 out:
 	if (corepath != NULL)
 		free(corepath);

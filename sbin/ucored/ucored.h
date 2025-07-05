@@ -19,6 +19,7 @@ struct ucore {
 	size_t		ucore_datasegs;
 	int		ucore_signo;
 	int32_t		ucore_pad2[4];
+	int		ucore_jid;
 	pid_t		ucore_ppid;
 	pid_t		ucore_pid;
 	int8_t		ucore_pad3[8];
