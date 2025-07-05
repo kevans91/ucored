@@ -1,0 +1,42 @@
+/*-
+ * Copyright (c) 2025 Kyle Evans <kevans@FreeBSD.org>
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#ifndef UCORED_H
+#define	UCORED_H
+
+#include <sys/param.h>
+
+#define	PATH_UCORED_SOCK	"/var/run/ucored.sock"
+
+#define	UCORE_MAGIC	"UCORE0"
+
+struct ucore {
+	char	ucore_magic[sizeof(UCORE_MAGIC) - 1];
+	size_t	ucore_datasegs;
+	int	ucore_signo;
+	pid_t	ucore_pid;
+};
+
+#define	UCORED_MAXSEGS	32		/* Max # data segments */
+#define	UCORED_MAXSEGSZ	(1024 * 4)	/* 4k segments at most. */
+
+enum ucore_data_type {
+	UDT_COMM = 0,
+	UDT_JAIL,
+	UDT_PATH,
+};
+
+struct ucore_data_hdr {
+	enum ucore_data_type	uhdr_type;
+	size_t			uhdr_size;
+};
+
+struct ucore_data {
+	struct ucore_data_hdr	ud_hdr;
+	uint8_t			ud_data[];
+};
+
+#endif	/* UCORED_H */

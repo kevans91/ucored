@@ -1,0 +1,515 @@
+/*-
+ * Copyright (c) 2025 Kyle Evans <kevans@FreeBSD.org>
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#include <sys/param.h>
+#include <sys/event.h>
+#include <sys/socket.h>
+#include <sys/sysctl.h>
+#include <sys/queue.h>
+#include <sys/un.h>
+
+#include <assert.h>
+#include <errno.h>
+#include <signal.h>
+#include <stdatomic.h>
+#include <stdbool.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <syslog.h>
+#include <time.h>
+#include <unistd.h>
+
+#include "ucored.h"
+
+enum ucored_state {
+	STATE_HDR = 0,
+	STATE_DATASEGS,
+	STATE_DONE,
+};
+
+struct ucored_client_data {
+	SLIST_ENTRY(ucored_client_data)	cl_entry;
+	struct ucore_data		cl_data;
+};
+
+struct ucored_client {
+	struct ucore				cl_hdr;
+	SLIST_ENTRY(ucored_client)		cl_client;
+	SLIST_HEAD(,  ucored_client_data)	cl_datasegs;
+	struct ucored_client_data		*cl_curdataseg;
+	size_t					cl_ndatasegs;
+	size_t					cl_datasegs_recvd;
+	struct timespec				cl_lastseen;
+	int					cl_fd;
+	enum ucored_state			cl_state;
+};
+
+static SLIST_HEAD(, ucored_client) all_clients =
+    SLIST_HEAD_INITIALIZER(all_clients);
+
+#define	UCORED_TIMEOUT	60	/* Seconds */
+
+/* sysctl to enable devctl notifications upon coredump. */
+#define	DEVCTL_SYSCTL	"kern.coredump_devctl"
+
+static int ucored_loop(int);
+static size_t ucored_client_lowat(struct ucored_client *);
+static bool ucored_client_newseg(struct ucored_client *,
+    struct ucore_data_hdr *);
+static void ucored_client_done(struct ucored_client *);
+static void ucored_client_close(struct ucored_client *);
+
+static sig_atomic_t ucored_terminate;
+
+static void
+handle_signal(int signo __unused)
+{
+
+	ucored_terminate = 1;
+	atomic_signal_fence(memory_order_release);
+}
+
+static void
+ucored_signal_setup(void)
+{
+	sigset_t set;
+	struct sigaction sa = {
+		/* No SA_RESTART */
+		.sa_handler = handle_signal,
+	};
+
+	(void)sigaction(SIGINT, &sa, NULL);
+	(void)sigaction(SIGTERM, &sa, NULL);
+
+	sigemptyset(&set);
+	sigaddset(&set, SIGINT);
+	sigaddset(&set, SIGTERM);
+	(void)sigprocmask(SIG_UNBLOCK, &set, NULL);
+}
+
+static int
+ucored_sock(void)
+{
+	struct sockaddr_un sun;
+	size_t ret;
+	int sock;
+
+	sock = socket(PF_UNIX, SOCK_STREAM, 0);
+	if (sock == -1) {
+		syslog(LOG_ERR, "socket: %m");
+		return (-1);
+	}
+
+	sun.sun_family = AF_UNIX;
+	ret = strlcpy(&sun.sun_path[0], PATH_UCORED_SOCK, sizeof(sun.sun_path));
+	assert(ret < sizeof(sun.sun_path));
+
+	sun.sun_len = SUN_LEN(&sun);
+
+	if (bind(sock, (const struct sockaddr *)&sun, sizeof(sun)) == -1) {
+		syslog(LOG_ERR, "bind: %m");
+		close(sock);
+		return (-1);
+	}
+
+	return (sock);
+}
+
+static int
+watch_socket(int kq, int sock, struct ucored_client *cl)
+{
+	struct kevent ev;
+
+	if (cl == NULL) {
+		/* Listening socket */
+		EV_SET(&ev, sock, EVFILT_READ, EV_ADD, 0, 0, NULL);
+	} else {
+		/*
+		 * Clients do one-shot for each segment of data they expect
+		 * to receive.
+		 */
+		EV_SET(&ev, sock, EVFILT_READ, EV_ADD | EV_ONESHOT,
+		    NOTE_LOWAT, ucored_client_lowat(cl), cl);
+	}
+
+	if (kevent(kq, &ev, 1, NULL, 0, NULL) == -1) {
+		syslog(LOG_ERR, "kevent: %m");
+		return (-1);
+	}
+
+	return (0);
+}
+
+/*
+ * Sets the sysctl to newst and returns the previous state.  We'll be a good
+ * citizen and disable it on our way out.
+ */
+static int
+devctl_fiddle(int newst)
+{
+	int oldval;
+	size_t oldlen;
+
+	oldlen = sizeof(oldval);
+	if (sysctlbyname(DEVCTL_SYSCTL, &oldval, &oldlen, &newst,
+	    sizeof(newst)) == -1) {
+		syslog(LOG_ERR, "sysctlbynme: %m");
+		return (-1);
+	}
+
+	return (oldval);
+}
+
+int
+main(int argc __unused, char *argv[] __unused)
+{
+	struct ucored_client *cl;
+	int error = 1, devctl_prev, kq = -1, sock = -1;
+
+	if (daemon(0, 0) == -1) {
+		fprintf(stderr, "daemon: %s", strerror(errno));
+		return (1);
+	}
+
+	kq = kqueue();
+	if (kq == -1) {
+		syslog(LOG_ERR, "kqueue: %m");
+		return (1);
+	}
+
+	sock = ucored_sock();
+	if (sock == -1)
+		goto done;
+
+	if (listen(sock, 10) == -1) {
+		syslog(LOG_ERR, "listen: %m");
+		goto done;
+	}
+
+	if (watch_socket(kq, sock, 0) == -1)
+		goto done;
+
+	/*
+	 * We'll setup SIGINT/SIGTERM to interrupt us, after which we'll briefly
+	 * evacuate the daemon and clean up our current state.  Any cores that
+	 * are in the process of being handled will be finished, but if we were
+	 * in the middle of receiving core metadata we'll drop that one on the
+	 * floor.
+	 */
+	ucored_signal_setup();
+
+	devctl_prev = devctl_fiddle(1);
+
+	error = ucored_loop(kq);
+
+	/*
+	 * Cleanup time; make sure we don't leave our socket laying around, and
+	 * we'll also want to restore the previous system state for whether or
+	 * not the kernel generates devctl notifications for coredumps.
+	 */
+	(void)unlink(PATH_UCORED_SOCK);
+	if (!devctl_prev)
+		(void)devctl_fiddle(0);
+
+	while ((cl = SLIST_FIRST(&all_clients)) != NULL)
+		ucored_client_close(cl);
+
+done:
+	if (kq >= 0)
+		close(kq);
+	if (sock >= 0)
+		close(sock);
+	return (error);
+}
+
+static void
+ucore_now(struct timespec *tsp)
+{
+	(void)clock_gettime(CLOCK_UPTIME, tsp);
+}
+
+static void
+ucore_accept(int kq, int fd, int backlog)
+{
+	struct ucored_client *cl;
+	int clsock;
+
+	/*
+	 * All errors here are considered non-fatal.  We'll return and move on
+	 * in case it's a transient condition; perhaps some other event we will
+	 * be executing on would relieve it.  In the worst case scenario, all
+	 * we have are new connections and we'll keep returning here just to
+	 * shut them down.
+	 */
+	for (int i = 0; i < backlog; i++) {
+		clsock = accept(fd, NULL, NULL);
+		if (clsock == -1) {
+			syslog(LOG_ERR, "accept: %m");
+			return;
+		}
+
+		/* XXX Check credentials? */
+
+		cl = calloc(1, sizeof(*cl));
+		if (cl == NULL) {
+			syslog(LOG_ERR, "malloc: %m");
+			close(clsock);
+			return;
+		}
+
+		SLIST_INSERT_HEAD(&all_clients, cl, cl_client);
+		SLIST_INIT(&cl->cl_datasegs);
+		cl->cl_fd = clsock;
+		ucore_now(&cl->cl_lastseen);
+
+		/*
+		 * XXX Consider setting up an EVILT_TIMER with
+		 * with ident=(uintptr_t)cl to release resources from a
+		 * ucored client if they don't send us something valid in a
+		 * timely manner.
+		 */
+		watch_socket(kq, clsock, cl);
+	}
+}
+
+static void
+ucore_fetch(int kq, struct ucored_client *cl, size_t avail)
+{
+	struct ucore_data_hdr datahdr;
+	size_t wanted;
+
+	while (avail >= (wanted = ucored_client_lowat(cl))) {
+		void *buf;
+		size_t bufsz;
+		ssize_t readsz;
+
+		/*
+		 * When we're signaled to terminate, just break out immediately.
+		 */
+		atomic_signal_fence(memory_order_acquire);
+		if (ucored_terminate)
+			return;
+
+		assert(cl->cl_state != STATE_DONE);
+		switch (cl->cl_state) {
+		case STATE_HDR:
+			buf = &cl->cl_hdr;
+			bufsz = sizeof(cl->cl_hdr);
+			break;
+		case STATE_DATASEGS:
+			if (cl->cl_curdataseg == NULL) {
+				buf = &datahdr;
+				bufsz = sizeof(datahdr);
+			} else {
+				buf = &cl->cl_curdataseg->cl_data.ud_data;
+				bufsz = cl->cl_curdataseg->cl_data.ud_hdr.uhdr_size;
+			}
+
+			break;
+		case STATE_DONE:
+			__assert_unreachable();
+			break;
+		}
+
+		readsz = read(cl->cl_fd, buf, bufsz);
+		if (readsz < 0) {
+			if (errno == EINTR)
+				continue;
+
+			syslog(LOG_ERR, "read: %m -- closing connection");
+			ucored_client_close(cl);
+			return;
+		} else if ((size_t)readsz < bufsz) {
+			/*
+			 * The ucored protocol describes the exact amount of
+			 * data we *should* expect to receive, so short reads
+			 * mean that something is afoot.
+			 */
+			syslog(LOG_ERR, "read: short read -- closing connection");
+			ucored_client_close(cl);
+			return;
+		}
+
+		switch (cl->cl_state) {
+		case STATE_HDR:
+			/* Validate the header we received. */
+			buf = &cl->cl_hdr;
+			if (memcmp(cl->cl_hdr.ucore_magic, UCORE_MAGIC,
+			    sizeof(cl->cl_hdr.ucore_magic)) != 0) {
+				syslog(LOG_ERR, "bad magic -- closing connection");
+				ucored_client_close(cl);
+				return;
+			}
+
+			if (cl->cl_hdr.ucore_datasegs == 0) {
+				syslog(LOG_ERR, "no data -- closing connection");
+				ucored_client_close(cl);
+				return;
+			}
+
+			cl->cl_ndatasegs = cl->cl_hdr.ucore_datasegs;
+			cl->cl_state = STATE_DATASEGS;
+			break;
+		case STATE_DATASEGS:
+			if (cl->cl_curdataseg == NULL) {
+				/* ucored_client_newseg should issue error. */
+				if (!ucored_client_newseg(cl, &datahdr)) {
+					ucored_client_close(cl);
+					return;
+				}
+			} else {
+				/* Segment is finished. */
+				cl->cl_datasegs_recvd++;
+				SLIST_INSERT_HEAD(&cl->cl_datasegs,
+				    cl->cl_curdataseg, cl_entry);
+				cl->cl_curdataseg = NULL;
+
+				if (cl->cl_datasegs_recvd == cl->cl_ndatasegs) {
+					cl->cl_state = STATE_DONE;
+					ucored_client_done(cl);
+					return;
+				}
+			}
+
+			break;
+		case STATE_DONE:
+			__assert_unreachable();
+		}
+	}
+
+	/* Re-arm the kevent because we need more data. */
+	watch_socket(kq, cl->cl_fd, cl);
+	ucore_now(&cl->cl_lastseen);
+}
+
+static int
+ucored_loop(int kq)
+{
+	struct kevent kev[4];
+	int ret;
+
+	assert(kq >= 0);
+
+	for (;;) {
+		atomic_signal_fence(memory_order_acquire);
+		if (ucored_terminate)
+			break;
+
+		ret = kevent(kq, NULL, 0, &kev[0], nitems(kev), NULL);
+		if (ret == -1) {
+			if (errno == EINTR)
+				continue;
+
+			syslog(LOG_ERR, "kevent: %m");
+			return (1);
+		}
+
+		for (int idx = 0; idx < ret; idx++) {
+			const struct kevent *evt = &kev[idx];
+			struct ucored_client *cl;
+			int fd;
+
+			fd = evt->ident;
+			cl = evt->udata;
+			if (cl == NULL) {
+				ucore_accept(kq, fd, evt->data);
+				continue;
+			}
+
+			ucore_fetch(kq, cl, evt->data);
+			/* Client may not be valid anymore. */
+			if (ucored_terminate)
+				goto out;
+		}
+	}
+
+out:
+	return (0);
+}
+
+static size_t
+ucored_client_lowat(struct ucored_client *cl)
+{
+
+	switch (cl->cl_state) {
+	case STATE_HDR:
+		return (sizeof(cl->cl_hdr));
+	case STATE_DATASEGS:
+		/*
+		 * The data-sgement part of the state machine is either waiting
+		 * for headers or waiting for the data part of the segment.  For
+		 * simplicity, we won't read() until we have all of the data we
+		 * need (for better or worse).
+		 */
+		if (cl->cl_curdataseg == NULL)
+			return (sizeof(struct ucore_data_hdr));
+		else
+			return (cl->cl_curdataseg->cl_data.ud_hdr.uhdr_size);
+		break;
+	default:
+		/* Unknown: Just return if we have *anything* to read. */
+		return (1);
+	}
+}
+
+static bool
+ucored_client_newseg(struct ucored_client *cl, struct ucore_data_hdr *hdr)
+{
+	struct ucored_client_data *dataseg;
+
+	assert(cl->cl_curdataseg == NULL);
+	if (hdr->uhdr_size > UCORED_MAXSEGSZ) {
+		syslog(LOG_ERR,
+		    "overly large segment (%zu) -- closing connection",
+		    hdr->uhdr_size);
+		return (false);
+	}
+
+	dataseg = malloc(sizeof(struct ucored_client_data) + hdr->uhdr_size);
+	if (dataseg == NULL) {
+		syslog(LOG_ERR, "malloc newseg: %m -- closing connection");
+		return (false);
+	}
+
+	memcpy(&dataseg->cl_data.ud_hdr, hdr, sizeof(*hdr));
+	cl->cl_curdataseg = dataseg;
+
+	return (true);
+}
+
+static void
+ucored_client_done(struct ucored_client *cl)
+{
+
+	assert(cl->cl_state == STATE_DONE);
+
+	/* XXX Ack it.  */
+	shutdown(cl->cl_fd, SHUT_RD);
+
+	/* XXX Process the core. */
+	syslog(LOG_INFO, "Core received cleanly -- TOOD: Process it");
+
+	ucored_client_close(cl);
+}
+
+static void
+ucored_client_close(struct ucored_client *cl)
+{
+	struct ucored_client_data *cld;
+
+	close(cl->cl_fd);
+	cl->cl_fd = -1;
+
+	while ((cld = SLIST_FIRST(&cl->cl_datasegs)) != NULL) {
+		SLIST_REMOVE_HEAD(&cl->cl_datasegs, cl_entry);
+		free(cld);
+	}
+
+	SLIST_REMOVE(&all_clients, cl, ucored_client, cl_client);
+
+	free(cl);
+}
