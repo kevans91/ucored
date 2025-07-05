@@ -26,6 +26,7 @@ struct ucore {
 enum ucore_data_type {
 	UDT_COMM = 0,
 	UDT_JAIL,
+	UDT_JAILROOT,
 	UDT_PATH,
 };
 

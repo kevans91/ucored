@@ -43,9 +43,8 @@ usage(void)
  * send that along.
  */
 static char *
-resolve_path(int jid, const char *core, char *ojailname)
+resolve_path(int jid, const char *core, char *ojailpath, char *ojailname)
 {
-	char path[MAXPATHLEN];
 	char *corepath;
 	char strjid[16];
 
@@ -54,7 +53,7 @@ resolve_path(int jid, const char *core, char *ojailname)
 
 	(void)snprintf(strjid, sizeof(strjid), "%d", jid);
 
-	if (jail_getv(0, "jid", strjid, "path", &path[0],
+	if (jail_getv(0, "jid", strjid, "path", ojailpath,
 	    "name", ojailname, NULL) == -1) {
 		syslog(LOG_ERR, "jid %s seems to have disappeared", strjid);
 		exit(1);
@@ -64,7 +63,7 @@ resolve_path(int jid, const char *core, char *ojailname)
 	 * The core path we get in the devd notification should be absolute
 	 * from the jail's root, so we just need to prepend the jail path.
 	 */
-	if (asprintf(&corepath, "%s%s", path, core) == -1)
+	if (asprintf(&corepath, "%s%s", ojailpath, core) == -1)
 		return (NULL);
 
 	return (corepath);
@@ -200,6 +199,7 @@ ucored_send(int ucored, int pid, int signo)
 int
 main(int argc, char *argv[])
 {
+	char jailpath[MAXPATHLEN];
 	char jailname[MAXHOSTNAMELEN];
 	const char *comm, *core;
 	char *corepath;
@@ -251,7 +251,7 @@ main(int argc, char *argv[])
 	comm = argv[0];
 	core = argv[1];
 
-	corepath = resolve_path(jid, core, &jailname[0]);
+	corepath = resolve_path(jid, core, &jailpath[0], &jailname[0]);
 	if (corepath == NULL) {
 		syslog(LOG_ERR, "resolve_path: %m");
 		return (1);
@@ -263,14 +263,21 @@ main(int argc, char *argv[])
 		return (1);
 	}
 
-	if ((error = add_segment(UDT_COMM, comm, strlen(comm))) != 0)
+	/* Add NUL terminators across the board. */
+	if ((error = add_segment(UDT_COMM, comm, strlen(comm) + 1)) != 0)
 		goto out;
-	if ((error = add_segment(UDT_PATH, corepath, strlen(corepath))) != 0)
+	if ((error = add_segment(UDT_PATH, corepath, strlen(corepath) + 1)) != 0)
 		goto out;
 
-	if (jailname[0] != '\0' &&
-	    (error = add_segment(UDT_JAIL, jailname, strlen(jailname))) != 0)
-		goto out;
+	if (jailname[0] != '\0') {
+		error = add_segment(UDT_JAIL, jailname, strlen(jailname) + 1);
+		if (error != 0)
+			goto out;
+		error = add_segment(UDT_JAILROOT, jailpath,
+		    strlen(jailpath) + 1);
+		if (error != 0)
+			goto out;
+	}
 
 	error = ucored_send(ucored, pid, signo);
 out:
