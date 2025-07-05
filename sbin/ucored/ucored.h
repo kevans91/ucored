@@ -17,6 +17,7 @@ struct ucore {
 	char	ucore_magic[sizeof(UCORE_MAGIC) - 1];
 	size_t	ucore_datasegs;
 	int	ucore_signo;
+	pid_t	ucore_ppid;
 	pid_t	ucore_pid;
 };
 

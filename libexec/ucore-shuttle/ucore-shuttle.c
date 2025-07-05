@@ -162,14 +162,15 @@ ucored_send_data(int ucored, const void *payload, size_t payloadsz)
 }
 
 static int
-ucored_send(int ucored, int pid, int signo)
+ucored_send(int ucored, int ppid, int pid, int signo)
 {
 	struct ucore_shuttle_data *sd;
-	struct ucore uc;
+	struct ucore uc = { 0 };
 
 	assert(sd_nsegments != 0);
 	memcpy(&uc.ucore_magic[0], UCORE_MAGIC, sizeof(uc.ucore_magic));
 	uc.ucore_datasegs = sd_nsegments;
+	uc.ucore_ppid = ppid;
 	uc.ucore_pid = pid;
 	uc.ucore_signo = signo;
 
@@ -204,13 +205,21 @@ main(int argc, char *argv[])
 	const char *comm, *core;
 	char *corepath;
 	const char *errstr, *jail = NULL;
-	int ch, error = 1, jid = 0, pid = 0, signo = 0, ucored = -1;
+	int ch, error = 1, jid = 0, ppid = 0, pid = 0, signo = 0, ucored = -1;
 
 	memset(jailname, 0, sizeof(jailname));
-	while ((ch = getopt(argc, argv, "j:p:s:")) != -1) {
+	while ((ch = getopt(argc, argv, "j:P:p:s:")) != -1) {
 		switch (ch) {
 		case 'j':
 			jail = optarg;
+			break;
+		case 'P':
+			ppid = strtonum(optarg, 0, INT_MAX, &errstr);
+			if (errstr != NULL) {
+				syslog(LOG_ERR, "ppid: %s", errstr);
+				return (1);
+			}
+
 			break;
 		case 'p':
 			pid = strtonum(optarg, 0, INT_MAX, &errstr);
@@ -279,7 +288,7 @@ main(int argc, char *argv[])
 			goto out;
 	}
 
-	error = ucored_send(ucored, pid, signo);
+	error = ucored_send(ucored, ppid, pid, signo);
 out:
 	if (corepath != NULL)
 		free(corepath);
