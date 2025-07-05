@@ -213,12 +213,12 @@ main(int argc __unused, char *argv[] __unused)
 	kq = kqueue();
 	if (kq == -1) {
 		syslog(LOG_ERR, "kqueue: %m");
-		return (1);
+		goto done_nosock;
 	}
 
 	sock = ucored_sock();
 	if (sock == -1)
-		goto done;
+		goto done_nosock;
 
 	if (listen(sock, 10) == -1) {
 		syslog(LOG_ERR, "listen: %m");
@@ -254,6 +254,7 @@ main(int argc __unused, char *argv[] __unused)
 
 done:
 	(void)unlink(PATH_UCORED_SOCK);
+done_nosock:
 	pidfile_remove(pidfh);
 
 	if (kq >= 0)
