@@ -1,3 +1,4 @@
+BINDIR=	${PREFIX:U/usr/local}/libexec
 PROG=	ucore-shuttle
 MAN=
 

@@ -1,3 +1,4 @@
+BINDIR=	${PREFIX:U/usr/local}/sbin
 PROG=	ucored
 MAN=
 
