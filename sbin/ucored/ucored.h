@@ -14,11 +14,14 @@
 #define	UCORE_MAGIC	"UCORE0"
 
 struct ucore {
-	char	ucore_magic[sizeof(UCORE_MAGIC) - 1];
-	size_t	ucore_datasegs;
-	int	ucore_signo;
-	pid_t	ucore_ppid;
-	pid_t	ucore_pid;
+	char		ucore_magic[sizeof(UCORE_MAGIC) - 1];
+	uint64_t	ucore_pad1[4];
+	size_t		ucore_datasegs;
+	int		ucore_signo;
+	int32_t		ucore_pad2[4];
+	pid_t		ucore_ppid;
+	pid_t		ucore_pid;
+	int8_t		ucore_pad3[8];
 };
 
 #define	UCORED_MAXSEGS	32		/* Max # data segments */
