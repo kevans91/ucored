@@ -528,8 +528,10 @@ ucored_client_done(struct ucored_client *cl)
 	/* XXX Ack it.  */
 	shutdown(cl->cl_fd, SHUT_RD);
 
+	syslog(LOG_INFO, "Core details received [pid=%d, ppid=%d, signo=%d]",
+	    cl->cl_hdr.ucore_pid, cl->cl_hdr.ucore_ppid, cl->cl_hdr.ucore_signo);
+
 	/* XXX Process the core. */
-	syslog(LOG_INFO, "Core received cleanly -- TOOD: Process it");
 
 	ucored_client_close(cl);
 }
