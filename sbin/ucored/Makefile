@@ -4,4 +4,7 @@ MAN=
 
 CFLAGS+=	-DUCORED
 
+LDADD+=	-lutil
+DPADD+=	-lutil
+
 .include <bsd.prog.mk>

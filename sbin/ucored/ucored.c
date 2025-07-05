@@ -12,6 +12,7 @@
 #include <sys/un.h>
 
 #include <assert.h>
+#include <err.h>
 #include <errno.h>
 #include <signal.h>
 #include <stdatomic.h>
@@ -22,6 +23,8 @@
 #include <syslog.h>
 #include <time.h>
 #include <unistd.h>
+
+#include <libutil.h>
 
 #include "ucored.h"
 
@@ -164,16 +167,48 @@ devctl_fiddle(int newst)
 	return (oldval);
 }
 
+static void
+usage(void)
+{
+
+	fprintf(stderr, "usage: %s [-p pidfile]\n", getprogname());
+	exit(1);
+}
+
 int
 main(int argc __unused, char *argv[] __unused)
 {
+	const char *pidfile = NULL;
+	struct pidfh *pidfh = NULL;
 	struct ucored_client *cl;
-	int error = 1, devctl_prev, kq = -1, sock = -1;
+	int ch, error = 1, devctl_prev, kq = -1, sock = -1;
+
+	while ((ch = getopt(argc, argv, "p:")) != -1) {
+		switch (ch) {
+		case 'p':
+			pidfile = optarg;
+			break;
+		default:
+			usage();
+			break;
+		}
+	}
+
+	if (pidfile != NULL &&
+	    (pidfh = pidfile_open(pidfile, 0644, NULL)) == NULL) {
+		if (errno == EEXIST)
+			errx(1, "ucored is already running");
+
+		warn("pidfile_open: %m");
+	}
 
 	if (daemon(0, 0) == -1) {
 		fprintf(stderr, "daemon: %s", strerror(errno));
+		pidfile_remove(pidfh);
 		return (1);
 	}
+
+	pidfile_write(pidfh);
 
 	kq = kqueue();
 	if (kq == -1) {
@@ -211,7 +246,6 @@ main(int argc __unused, char *argv[] __unused)
 	 * we'll also want to restore the previous system state for whether or
 	 * not the kernel generates devctl notifications for coredumps.
 	 */
-	(void)unlink(PATH_UCORED_SOCK);
 	if (!devctl_prev)
 		(void)devctl_fiddle(0);
 
@@ -219,6 +253,9 @@ main(int argc __unused, char *argv[] __unused)
 		ucored_client_close(cl);
 
 done:
+	(void)unlink(PATH_UCORED_SOCK);
+	pidfile_remove(pidfh);
+
 	if (kq >= 0)
 		close(kq);
 	if (sock >= 0)
