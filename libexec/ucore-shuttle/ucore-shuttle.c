@@ -215,7 +215,8 @@ main(int argc, char *argv[])
 	while ((ch = getopt(argc, argv, "j:P:p:s:")) != -1) {
 		switch (ch) {
 		case 'j':
-			jail = optarg;
+			if (strcmp(optarg, "0") != 0)
+				jail = optarg;
 			break;
 		case 'P':
 			ppid = strtonum(optarg, 0, INT_MAX, &errstr);
@@ -259,9 +260,16 @@ main(int argc, char *argv[])
 	comm = argv[0];
 	core = argv[1];
 
-	syslog(LOG_INFO,
-	    "%s: notification received for jail %s, process %s[pid=%d]",
-	    core, jail, comm, pid);
+	if (jail != NULL) {
+			syslog(LOG_INFO,
+				"%s: notification received for jail %s process %s[pid=%d]",
+				core, jail, comm, pid);
+	} else {
+			syslog(LOG_INFO,
+				"%s: notification received for unjailed process %s[pid=%d]",
+				core, comm, pid);
+	}
+
 	if (jail != NULL && (jid = jail_getid(jail)) == -1) {
 		syslog(LOG_ERR,
 		    "%s: jail %s for %s[pid=%d] seems to have disappeared",
