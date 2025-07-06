@@ -113,6 +113,7 @@ ucored_sock(void)
 
 	sun.sun_len = SUN_LEN(&sun);
 
+	(void)unlink(PATH_UCORED_SOCK);
 	if (bind(sock, (const struct sockaddr *)&sun, sizeof(sun)) == -1) {
 		syslog(LOG_ERR, "bind: %m");
 		close(sock);
