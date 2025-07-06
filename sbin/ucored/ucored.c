@@ -28,29 +28,6 @@
 
 #include "ucored.h"
 
-enum ucored_state {
-	STATE_HDR = 0,
-	STATE_DATASEGS,
-	STATE_DONE,
-};
-
-struct ucored_client_data {
-	SLIST_ENTRY(ucored_client_data)	cl_entry;
-	struct ucore_data		cl_data;
-};
-
-struct ucored_client {
-	struct ucore				cl_hdr;
-	SLIST_ENTRY(ucored_client)		cl_client;
-	SLIST_HEAD(,  ucored_client_data)	cl_datasegs;
-	struct ucored_client_data		*cl_curdataseg;
-	size_t					cl_ndatasegs;
-	size_t					cl_datasegs_recvd;
-	struct timespec				cl_lastseen;
-	int					cl_fd;
-	enum ucored_state			cl_state;
-};
-
 static SLIST_HEAD(, ucored_client) all_clients =
     SLIST_HEAD_INITIALIZER(all_clients);
 
@@ -205,6 +182,11 @@ main(int argc __unused, char *argv[] __unused)
 			errx(1, "ucored is already running");
 
 		warn("pidfile_open: %m");
+	}
+
+	if (!ucored_lua_init()) {
+		pidfile_remove(pidfh);
+		return (1);
 	}
 
 	if (!debug && daemon(0, 0) == -1) {
@@ -536,7 +518,8 @@ ucored_client_done(struct ucored_client *cl)
 	syslog(LOG_INFO, "Core details received [pid=%d, ppid=%d, signo=%d]",
 	    cl->cl_hdr.ucore_pid, cl->cl_hdr.ucore_ppid, cl->cl_hdr.ucore_signo);
 
-	/* XXX Process the core. */
+	/* XXX Check return... fork? */
+	ucored_lua_handle(cl);
 
 	ucored_client_close(cl);
 }
