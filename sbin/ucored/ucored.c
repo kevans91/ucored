@@ -182,9 +182,13 @@ main(int argc __unused, char *argv[] __unused)
 	struct pidfh *pidfh = NULL;
 	struct ucored_client *cl;
 	int ch, error = 1, devctl_prev, kq = -1, sock = -1;
+	bool debug = false;
 
-	while ((ch = getopt(argc, argv, "p:")) != -1) {
+	while ((ch = getopt(argc, argv, "dp:")) != -1) {
 		switch (ch) {
+		case 'd':
+			debug = true;
+			break;
 		case 'p':
 			pidfile = optarg;
 			break;
@@ -202,7 +206,7 @@ main(int argc __unused, char *argv[] __unused)
 		warn("pidfile_open: %m");
 	}
 
-	if (daemon(0, 0) == -1) {
+	if (!debug && daemon(0, 0) == -1) {
 		fprintf(stderr, "daemon: %s", strerror(errno));
 		pidfile_remove(pidfh);
 		return (1);
