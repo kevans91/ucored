@@ -57,6 +57,12 @@ ucored_lua_logit(lua_State *L, int priority)
 }
 
 static int
+ucored_lua_debug(lua_State *L)
+{
+	return (ucored_lua_logit(L, LOG_DEBUG));
+}
+
+static int
 ucored_lua_error(lua_State *L)
 {
 	return (ucored_lua_logit(L, LOG_ERR));
@@ -197,6 +203,7 @@ ucored_lua_regcomp(lua_State *L)
 
 #define	REG_SIMPLE(n)	{ #n, ucored_lua_ ## n }
 static const struct luaL_Reg corelib[] = {
+	REG_SIMPLE(debug),
 	REG_SIMPLE(error),
 	REG_SIMPLE(info),
 	REG_SIMPLE(isdir),
