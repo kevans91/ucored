@@ -103,23 +103,29 @@ local action_handlers = {
 
 			if not ok then
 				core.error(path .. ": " .. err)
+			else
+				core.notice(path .. " discarded")
 			end
 
 			return ok
 		end,
 	},
 	ignore = {
-		apply = function()
+		apply = function(_, ucore)
+			core.notice(ucore:path() .. " ignored")
 			return true
 		end,
 	},
 	move = {
 		apply = function(action, ucore)
 			local dest = process_destpath(ucore, action.destination)
+			local path = ucore:path()
 			local ok, err = ucore:move(dest)
 
 			if not ok then
-				core.error(ucore:path() .. ": " .. err)
+				core.error(path .. " move: " .. err)
+			else
+				core.notice(path .. " moved to " .. dest)
 			end
 
 			return ok
@@ -136,7 +142,9 @@ local action_handlers = {
 	},
 	script = {
 		apply = function(action, ucore)
-			return action.handler(ucore)
+			local ok =  action.handler(ucore)
+			core.notice(ucore:path() .. " handed over to " .. action.file)
+			return ok
 		end,
 		validate = function(action)
 			local scriptf = action.file

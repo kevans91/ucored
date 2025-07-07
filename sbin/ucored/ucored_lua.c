@@ -174,6 +174,12 @@ ucored_lua_mkpath(lua_State *L)
 }
 
 static int
+ucored_lua_notice(lua_State *L)
+{
+	return (ucored_lua_logit(L, LOG_NOTICE));
+}
+
+static int
 ucored_lua_regcomp(lua_State *L)
 {
 	const char *pattern;
@@ -208,6 +214,7 @@ static const struct luaL_Reg corelib[] = {
 	REG_SIMPLE(info),
 	REG_SIMPLE(isdir),
 	REG_SIMPLE(mkpath),
+	REG_SIMPLE(notice),
 	REG_SIMPLE(regcomp),
 	{ NULL, NULL },
 };
