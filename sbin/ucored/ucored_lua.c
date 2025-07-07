@@ -12,7 +12,6 @@
 #include <regex.h>
 #include <stdlib.h>
 #include <string.h>
-#include <syslog.h>
 #include <unistd.h>
 
 #include <assert.h>
@@ -51,7 +50,7 @@ ucored_lua_logit(lua_State *L, int priority)
 	const char *logstr;
 
 	logstr = luaL_checkstring(L, 1);
-	syslog(priority, "%s", logstr);
+	ucored_log(priority, "%s", logstr);
 
 	lua_pushboolean(L, 1);
 	return (1);
@@ -644,7 +643,7 @@ ucored_lua_handle(struct ucored_client *cl)
 		if (err == NULL)
 			err = "unknown";
 
-		syslog(LOG_ERR, "%s\n", err);
+		ucored_log(LOG_ERR, "%s\n", err);
 		lua_pop(ucored_state, 1);
 		return (false);
 	}

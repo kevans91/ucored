@@ -9,7 +9,9 @@
 
 #include <sys/param.h>
 #include <sys/queue.h>
+
 #include <stdbool.h>
+#include <syslog.h>
 
 #define	PATH_UCORED_SOCK	"/var/run/ucored.sock"
 
@@ -71,6 +73,10 @@ struct ucored_client {
 	enum ucored_state			cl_state;
 };
 
+/* ucored.c */
+void ucored_log(int, const char *, ...) __printflike(2, 3);
+
+/* ucored_lua.c */
 bool ucored_lua_init(void);
 bool ucored_lua_handle(struct ucored_client *);
 #endif	/* UCORED */

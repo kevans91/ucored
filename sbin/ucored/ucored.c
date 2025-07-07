@@ -15,12 +15,12 @@
 #include <err.h>
 #include <errno.h>
 #include <signal.h>
+#include <stdarg.h>
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <syslog.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -43,6 +43,7 @@ static bool ucored_client_newseg(struct ucored_client *,
 static void ucored_client_done(struct ucored_client *);
 static void ucored_client_close(struct ucored_client *);
 
+static bool ucored_debug;
 static sig_atomic_t ucored_terminate;
 
 static void
@@ -80,7 +81,7 @@ ucored_sock(void)
 
 	sock = socket(PF_UNIX, SOCK_STREAM, 0);
 	if (sock == -1) {
-		syslog(LOG_ERR, "socket: %m");
+		ucored_log(LOG_ERR, "socket: %m");
 		return (-1);
 	}
 
@@ -92,7 +93,7 @@ ucored_sock(void)
 
 	(void)unlink(PATH_UCORED_SOCK);
 	if (bind(sock, (const struct sockaddr *)&sun, sizeof(sun)) == -1) {
-		syslog(LOG_ERR, "bind: %m");
+		ucored_log(LOG_ERR, "bind: %m");
 		close(sock);
 		return (-1);
 	}
@@ -118,7 +119,7 @@ watch_socket(int kq, int sock, struct ucored_client *cl)
 	}
 
 	if (kevent(kq, &ev, 1, NULL, 0, NULL) == -1) {
-		syslog(LOG_ERR, "kevent: %m");
+		ucored_log(LOG_ERR, "kevent: %m");
 		return (-1);
 	}
 
@@ -138,7 +139,7 @@ devctl_fiddle(int newst)
 	oldlen = sizeof(oldval);
 	if (sysctlbyname(DEVCTL_SYSCTL, &oldval, &oldlen, &newst,
 	    sizeof(newst)) == -1) {
-		syslog(LOG_ERR, "sysctlbynme: %m");
+		ucored_log(LOG_ERR, "sysctlbynme: %m");
 		return (-1);
 	}
 
@@ -160,12 +161,11 @@ main(int argc __unused, char *argv[] __unused)
 	struct pidfh *pidfh = NULL;
 	struct ucored_client *cl;
 	int ch, error = 1, devctl_prev, kq = -1, sock = -1;
-	bool debug = false;
 
 	while ((ch = getopt(argc, argv, "dp:")) != -1) {
 		switch (ch) {
 		case 'd':
-			debug = true;
+			ucored_debug = true;
 			break;
 		case 'p':
 			pidfile = optarg;
@@ -189,7 +189,7 @@ main(int argc __unused, char *argv[] __unused)
 		return (1);
 	}
 
-	if (!debug && daemon(0, 0) == -1) {
+	if (!ucored_debug && daemon(0, 0) == -1) {
 		fprintf(stderr, "daemon: %s", strerror(errno));
 		pidfile_remove(pidfh);
 		return (1);
@@ -199,7 +199,7 @@ main(int argc __unused, char *argv[] __unused)
 
 	kq = kqueue();
 	if (kq == -1) {
-		syslog(LOG_ERR, "kqueue: %m");
+		ucored_log(LOG_ERR, "kqueue: %m");
 		goto done_nosock;
 	}
 
@@ -208,7 +208,7 @@ main(int argc __unused, char *argv[] __unused)
 		goto done_nosock;
 
 	if (listen(sock, 10) == -1) {
-		syslog(LOG_ERR, "listen: %m");
+		ucored_log(LOG_ERR, "listen: %m");
 		goto done;
 	}
 
@@ -273,7 +273,7 @@ ucore_accept(int kq, int fd, int backlog)
 	for (int i = 0; i < backlog; i++) {
 		clsock = accept(fd, NULL, NULL);
 		if (clsock == -1) {
-			syslog(LOG_ERR, "accept: %m");
+			ucored_log(LOG_ERR, "accept: %m");
 			return;
 		}
 
@@ -281,7 +281,7 @@ ucore_accept(int kq, int fd, int backlog)
 
 		cl = calloc(1, sizeof(*cl));
 		if (cl == NULL) {
-			syslog(LOG_ERR, "malloc: %m");
+			ucored_log(LOG_ERR, "malloc: %m");
 			close(clsock);
 			return;
 		}
@@ -345,7 +345,7 @@ ucore_fetch(int kq, struct ucored_client *cl, size_t avail)
 			if (errno == EINTR)
 				continue;
 
-			syslog(LOG_ERR, "read: %m -- closing connection");
+			ucored_log(LOG_ERR, "read: %m -- closing connection");
 			ucored_client_close(cl);
 			return;
 		} else if ((size_t)readsz < bufsz) {
@@ -354,7 +354,7 @@ ucore_fetch(int kq, struct ucored_client *cl, size_t avail)
 			 * data we *should* expect to receive, so short reads
 			 * mean that something is afoot.
 			 */
-			syslog(LOG_ERR, "read: short read -- closing connection");
+			ucored_log(LOG_ERR, "read: short read -- closing connection");
 			ucored_client_close(cl);
 			return;
 		}
@@ -365,13 +365,13 @@ ucore_fetch(int kq, struct ucored_client *cl, size_t avail)
 			buf = &cl->cl_hdr;
 			if (memcmp(cl->cl_hdr.ucore_magic, UCORE_MAGIC,
 			    sizeof(cl->cl_hdr.ucore_magic)) != 0) {
-				syslog(LOG_ERR, "bad magic -- closing connection");
+				ucored_log(LOG_ERR, "bad magic -- closing connection");
 				ucored_client_close(cl);
 				return;
 			}
 
 			if (cl->cl_hdr.ucore_datasegs == 0) {
-				syslog(LOG_ERR, "no data -- closing connection");
+				ucored_log(LOG_ERR, "no data -- closing connection");
 				ucored_client_close(cl);
 				return;
 			}
@@ -429,7 +429,7 @@ ucored_loop(int kq)
 			if (errno == EINTR)
 				continue;
 
-			syslog(LOG_ERR, "kevent: %m");
+			ucored_log(LOG_ERR, "kevent: %m");
 			return (1);
 		}
 
@@ -488,7 +488,7 @@ ucored_client_newseg(struct ucored_client *cl, struct ucore_data_hdr *hdr)
 
 	assert(cl->cl_curdataseg == NULL);
 	if (hdr->uhdr_size > UCORED_MAXSEGSZ) {
-		syslog(LOG_ERR,
+		ucored_log(LOG_ERR,
 		    "overly large segment (%zu) -- closing connection",
 		    hdr->uhdr_size);
 		return (false);
@@ -496,7 +496,7 @@ ucored_client_newseg(struct ucored_client *cl, struct ucore_data_hdr *hdr)
 
 	dataseg = malloc(sizeof(struct ucored_client_data) + hdr->uhdr_size);
 	if (dataseg == NULL) {
-		syslog(LOG_ERR, "malloc newseg: %m -- closing connection");
+		ucored_log(LOG_ERR, "malloc newseg: %m -- closing connection");
 		return (false);
 	}
 
@@ -515,7 +515,7 @@ ucored_client_done(struct ucored_client *cl)
 	/* XXX Ack it.  */
 	shutdown(cl->cl_fd, SHUT_RD);
 
-	syslog(LOG_INFO, "Core details received [pid=%d, ppid=%d, signo=%d]",
+	ucored_log(LOG_INFO, "Core details received [pid=%d, ppid=%d, signo=%d]",
 	    cl->cl_hdr.ucore_pid, cl->cl_hdr.ucore_ppid, cl->cl_hdr.ucore_signo);
 
 	/* XXX Check return... fork? */
@@ -540,4 +540,35 @@ ucored_client_close(struct ucored_client *cl)
 	SLIST_REMOVE(&all_clients, cl, ucored_client, cl_client);
 
 	free(cl);
+}
+
+void
+ucored_log(int priority, const char *fmt, ...)
+{
+	va_list ap;
+
+	va_start(ap, fmt);
+	if (ucored_debug) {
+		FILE *fp;
+
+		switch (priority) {
+		case LOG_NOTICE:
+		case LOG_INFO:
+		case LOG_DEBUG:
+			fp = stdout;
+			break;
+		case LOG_ERR:
+		case LOG_WARNING:
+		default:
+			fp = stderr;
+			break;
+		}
+
+		vfprintf(fp, fmt, ap);
+		/* syslog messages omit the newline; just toss one in. */
+		fputc('\n', fp);
+	} else {
+		vsyslog(priority, fmt, ap);
+	}
+	va_end(ap);
 }
