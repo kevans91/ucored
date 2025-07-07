@@ -332,14 +332,17 @@ ucore_fetch(int kq, struct ucored_client *cl, size_t avail)
 		assert(cl->cl_state != STATE_DONE);
 		switch (cl->cl_state) {
 		case STATE_HDR:
+			ucored_log(LOG_DEBUG, "Reading client header");
 			buf = &cl->cl_hdr;
 			bufsz = sizeof(cl->cl_hdr);
 			break;
 		case STATE_DATASEGS:
 			if (cl->cl_curdataseg == NULL) {
+				ucored_log(LOG_DEBUG, "Reading data segment header");
 				buf = &datahdr;
 				bufsz = sizeof(datahdr);
 			} else {
+				ucored_log(LOG_DEBUG, "Reading data segment body");
 				buf = &cl->cl_curdataseg->cl_data.ud_data;
 				bufsz = cl->cl_curdataseg->cl_data.ud_hdr.uhdr_size;
 			}
@@ -372,6 +375,8 @@ ucore_fetch(int kq, struct ucored_client *cl, size_t avail)
 		switch (cl->cl_state) {
 		case STATE_HDR:
 			/* Validate the header we received. */
+			ucored_log(LOG_DEBUG, "Validating header");
+
 			buf = &cl->cl_hdr;
 			if (memcmp(cl->cl_hdr.ucore_magic, UCORE_MAGIC,
 			    sizeof(cl->cl_hdr.ucore_magic)) != 0) {
@@ -391,6 +396,7 @@ ucore_fetch(int kq, struct ucored_client *cl, size_t avail)
 			break;
 		case STATE_DATASEGS:
 			if (cl->cl_curdataseg == NULL) {
+				ucored_log(LOG_DEBUG, "Segment header received");
 				/* ucored_client_newseg should issue error. */
 				if (!ucored_client_newseg(cl, &datahdr)) {
 					ucored_client_close(cl);
@@ -398,6 +404,7 @@ ucore_fetch(int kq, struct ucored_client *cl, size_t avail)
 				}
 			} else {
 				/* Segment is finished. */
+				ucored_log(LOG_DEBUG, "Data segment finished");
 				cl->cl_datasegs_recvd++;
 				SLIST_INSERT_HEAD(&cl->cl_datasegs,
 				    cl->cl_curdataseg, cl_entry);
@@ -455,6 +462,8 @@ ucored_loop(int kq)
 				continue;
 			}
 
+			ucored_log(LOG_DEBUG, "Fetching data from client %d",
+			    fd);
 			ucore_fetch(kq, cl, evt->data);
 			/* Client may not be valid anymore. */
 			if (ucored_terminate)
