@@ -58,7 +58,7 @@ local function process_destpath(ucore, path)
 		dir = path:sub(1, #path - #filename - 1)
 	end
 
-	-- We only peeled apart hte dir part to create it; path should still be
+	-- We only peeled apart the dir part to create it; path should still be
 	-- accurate since we replaced symbols up above.
 	if dir then
 		local is_relative = dir:sub(1, 1) ~= "/"
