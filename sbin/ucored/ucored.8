@@ -204,6 +204,11 @@ will fallback to using
 to try and be more performant.
 The owner, mode, and some file flags from the original coredump are preserved
 in the move.
+Specifically, the
+.Dv nouchg
+and
+.Dv nodump
+flags are preserved in case some other system policy would have set them.
 .Pp
 Note that
 .Nm
@@ -230,6 +235,7 @@ The
 .Nm
 utility exits 1 if an error occurs in startup.
 .Sh SEE ALSO
+.Xr chflags 1 ,
 .Xr copy_file_range 2 ,
 .Xr rename 2 ,
 .Xr unlink 2 ,
