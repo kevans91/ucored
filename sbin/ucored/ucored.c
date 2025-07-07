@@ -151,12 +151,12 @@ static void
 usage(void)
 {
 
-	fprintf(stderr, "usage: %s [-p pidfile]\n", getprogname());
+	fprintf(stderr, "usage: %s [-dv] [-p pidfile]\n", getprogname());
 	exit(1);
 }
 
 int
-main(int argc __unused, char *argv[] __unused)
+main(int argc, char *argv[])
 {
 	const char *pidfile = NULL;
 	struct pidfh *pidfh = NULL;
@@ -179,6 +179,12 @@ main(int argc __unused, char *argv[] __unused)
 			break;
 		}
 	}
+
+	argc -= optind;
+	argv += optind;
+
+	if (argc != 0)
+		usage();
 
 	if (pidfile != NULL &&
 	    (pidfh = pidfile_open(pidfile, 0644, NULL)) == NULL) {
