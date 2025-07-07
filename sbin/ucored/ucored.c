@@ -7,6 +7,7 @@
 #include <sys/param.h>
 #include <sys/event.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/sysctl.h>
 #include <sys/queue.h>
 #include <sys/un.h>
@@ -41,6 +42,7 @@ static size_t ucored_client_lowat(struct ucored_client *);
 static bool ucored_client_newseg(struct ucored_client *,
     struct ucore_data_hdr *);
 static void ucored_client_done(struct ucored_client *);
+static struct ucored_client *ucored_client_alloc(int, int);
 static void ucored_client_close(struct ucored_client *);
 
 static bool ucored_debug;
@@ -155,6 +157,20 @@ usage(void)
 	exit(1);
 }
 
+static bool
+ucored_socket_check(int fd)
+{
+	struct stat sb;
+
+	/*
+	 * If we can't tell that it's a socket, then we err on the side of
+	 * caution and assume it's not.  Otherwise, we'll operate on it.
+	 */
+	if (fstat(fd, &sb) == -1)
+		return (false);
+	return (S_ISSOCK(sb.st_mode));
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -162,6 +178,7 @@ main(int argc, char *argv[])
 	struct pidfh *pidfh = NULL;
 	struct ucored_client *cl;
 	int ch, error = 1, devctl_prev, kq = -1, sock = -1;
+	bool socket_initiated;
 
 	while ((ch = getopt(argc, argv, "dp:v")) != -1) {
 		switch (ch) {
@@ -186,6 +203,13 @@ main(int argc, char *argv[])
 	if (argc != 0)
 		usage();
 
+	/*
+	 * Check if we're socket initiated, e.g., inetd-style.
+	 */
+	socket_initiated = ucored_socket_check(STDIN_FILENO);
+	if (socket_initiated)
+		sock = STDIN_FILENO;
+
 	if (pidfile != NULL &&
 	    (pidfh = pidfile_open(pidfile, 0644, NULL)) == NULL) {
 		if (errno == EEXIST)
@@ -199,7 +223,7 @@ main(int argc, char *argv[])
 		return (1);
 	}
 
-	if (!ucored_debug && daemon(0, 0) == -1) {
+	if (!ucored_debug && !socket_initiated && daemon(0, 0) == -1) {
 		fprintf(stderr, "daemon: %s", strerror(errno));
 		pidfile_remove(pidfh);
 		return (1);
@@ -213,17 +237,21 @@ main(int argc, char *argv[])
 		goto done_nosock;
 	}
 
-	sock = ucored_sock();
-	if (sock == -1)
-		goto done_nosock;
+	if (!socket_initiated) {
+		sock = ucored_sock();
+		if (sock == -1)
+			goto done_nosock;
 
-	if (listen(sock, 10) == -1) {
-		ucored_log(LOG_ERR, "listen: %m");
+		if (listen(sock, 10) == -1) {
+			ucored_log(LOG_ERR, "listen: %m");
+			goto done;
+		}
+
+		if (watch_socket(kq, sock, 0) == -1)
+			goto done;
+	} else if (ucored_client_alloc(kq, sock) == NULL) {
 		goto done;
 	}
-
-	if (watch_socket(kq, sock, 0) == -1)
-		goto done;
 
 	/*
 	 * We'll setup SIGINT/SIGTERM to interrupt us, after which we'll briefly
@@ -234,7 +262,8 @@ main(int argc, char *argv[])
 	 */
 	ucored_signal_setup();
 
-	devctl_prev = devctl_fiddle(1);
+	if (!socket_initiated)
+		devctl_prev = devctl_fiddle(1);
 
 	error = ucored_loop(kq);
 
@@ -243,14 +272,15 @@ main(int argc, char *argv[])
 	 * we'll also want to restore the previous system state for whether or
 	 * not the kernel generates devctl notifications for coredumps.
 	 */
-	if (!devctl_prev)
+	if (!socket_initiated && !devctl_prev)
 		(void)devctl_fiddle(0);
 
 	while ((cl = SLIST_FIRST(&all_clients)) != NULL)
 		ucored_client_close(cl);
 
 done:
-	(void)unlink(PATH_UCORED_SOCK);
+	if (!socket_initiated)
+		(void)unlink(PATH_UCORED_SOCK);
 done_nosock:
 	pidfile_remove(pidfh);
 
@@ -270,7 +300,6 @@ ucore_now(struct timespec *tsp)
 static void
 ucore_accept(int kq, int fd, int backlog)
 {
-	struct ucored_client *cl;
 	int clsock;
 
 	/*
@@ -287,27 +316,15 @@ ucore_accept(int kq, int fd, int backlog)
 			return;
 		}
 
-		/* XXX Check credentials? */
-
-		cl = calloc(1, sizeof(*cl));
-		if (cl == NULL) {
-			ucored_log(LOG_ERR, "malloc: %m");
-			close(clsock);
-			return;
-		}
-
-		SLIST_INSERT_HEAD(&all_clients, cl, cl_client);
-		SLIST_INIT(&cl->cl_datasegs);
-		cl->cl_fd = clsock;
-		ucore_now(&cl->cl_lastseen);
-
 		/*
 		 * XXX Consider setting up an EVILT_TIMER with
 		 * with ident=(uintptr_t)cl to release resources from a
 		 * ucored client if they don't send us something valid in a
-		 * timely manner.
+		 * timely manner.  We don't bother in the socket-initiated case
+		 * because each instance services just a single client.
 		 */
-		watch_socket(kq, clsock, cl);
+		if (ucored_client_alloc(kq, clsock) == NULL)
+			return;
 	}
 }
 
@@ -541,6 +558,29 @@ ucored_client_done(struct ucored_client *cl)
 	ucored_lua_handle(cl);
 
 	ucored_client_close(cl);
+}
+
+static struct ucored_client *
+ucored_client_alloc(int kq, int clsock)
+{
+	struct ucored_client *cl;
+
+	/* XXX Check credentials? */
+
+	cl = calloc(1, sizeof(*cl));
+	if (cl == NULL) {
+		ucored_log(LOG_ERR, "malloc: %m");
+		close(clsock);
+		return (NULL);
+	}
+
+	SLIST_INSERT_HEAD(&all_clients, cl, cl_client);
+	SLIST_INIT(&cl->cl_datasegs);
+	cl->cl_fd = clsock;
+	ucore_now(&cl->cl_lastseen);
+
+	watch_socket(kq, clsock, cl);
+	return (cl);
 }
 
 static void
