@@ -1,0 +1,219 @@
+.\"
+.\" Copyright (c) 2025 Kyle Evans <kevans@FreeBSD.org>
+.\"
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.Dd July 6, 2025
+.Dt UCORED 8
+.Os
+.Sh NAME
+.Nm ucored
+.Nd process and filter userland coredump files
+.Sh SYNOPSIS
+.Nm
+.Op Fl dv
+.Op Fl p Ar pidfile
+.Sh DESCRIPTION
+The
+.Nm
+daemon listens for coredump notifications from the kernel via
+.Xr devd 8
+and applies a policy to each generated coredump.
+The default policy moves all coredumps to
+.Pa /var/ucrash ,
+though this is subject to change.
+.Pp
+The options are as follows:
+.Bl -tag -width indent
+.It Fl d
+Run in the foreground instead of detaching from the controlling terminal.
+This is intended to be used in debugging
+.Nm
+itself.
+All messages are redirected to either
+.Va stdout
+or
+.Va stderr .
+The
+.Fl d
+option does not imply any extra verbosity.
+.It Fl p Ar pidfile
+Write the
+.Nm
+daemon pid to the specified
+.Ar pidfile .
+If the
+.Ar pidfile
+already exists and contains a valid pid, then
+.Nm
+will refuse to start.
+.It Fl v
+Run with verbosity.
+The
+.Fl v
+option may be specified multiple times to increase verbosity.
+At this time, specifying more verbosity than
+.Fl vv
+will have no effect.
+.El
+.Ss Policies
+The
+.Nm
+daemon offers some flexibility in the policies it will apply to a coredump.
+The following policy actions are supported:
+.Bl -tag -width indent
+.It Dv discard
+Discards the coredump completely.
+.Nm
+will promptly
+.Xr unlink 2
+the coredump.
+.It Dv ignore
+Ignores the coredump.
+.It Dv move
+Moves the core file to some other
+.Ar destination
+on disk.
+.Pp
+If the specified
+.Ar destination
+does not have any path separators, then the operation is considered to be a
+rename.
+.Pp
+If the
+.Ar destination
+is a relative path, then it is considered to be relative to the original
+location of the coredump.
+.Pp
+If the
+.Ar destination
+does not end with a trailing slash, then the last component is assumed to be
+a filename unless the specified path already exists and is a directory.
+.Pp
+See
+.Sx Path Substitutions
+below for more details on how
+.Nm
+may augment paths.
+.It Dv script
+Specifies a script that will process the coredump.
+The
+.Ar file
+specified should be a lua script that returns a function that will handle an
+internal
+.Dv ucore
+object.
+See
+.Sx ucore Objects
+below for more details on what
+.Nm
+provides in a ucore object.
+.El
+.Ss Path Substitutions
+The
+.Nm
+daemon will process paths that are supplied as a destination to
+.Dv move
+to and apply requested substitutions for data from the coredump notification.
+These substitutions are applied to all parts of the path, not just the filename
+component.
+The following substitutions may be requested:
+.Bl -tag -width indent
+.It Dq \&%j
+The jid of the jail that the process belonged to.
+This will be 0 for unjailed processes.
+.It Dq \&%n
+The original filename of the coredump.
+This is most useful for simply appending or prepending extra data to the
+filename.
+.It Dq \&%P
+The pid of the process' parent.
+.It Dq \&%p
+The pid of the process.
+.It Dq \&%s
+The signal that triggered the coredump.
+.El
+.Ss Configuration
+Not yet.
+.Ss ucore Objects
+When information about a coredump has been received,
+.Nm
+constructs a
+.Dq ucore
+object with the relevant information.
+The following methods are available on the ucore object:
+.Bl -tag -width indent
+.It Dv ucore:attributes()
+Returns a table of attributes received.
+The following attributes are recorded:
+.Bl -tag -width indent
+.It Dv jid
+The jid of the jail that the process belonged to.
+This will be 0 for unjailed processes.
+.It Dv ppid
+The pid of the process' parent.
+.It Dv pid
+The pid of the process.
+.It Dv signal
+The signal that triggered the coredump.
+.El
+.It Dv ucore:comm()
+The command that was running.
+Note that the
+.Dq comm
+field in
+.Fx
+is limited to 19 bytes.
+.It Dv ucore:jail()
+The name of the jail the process was running in.
+.It Dv ucore:filename()
+The filename component of the core's path.
+.It Dv ucore:move(path)
+Move the core to the specified
+.Ar path .
+For file moves,
+.Nm
+will attempt to use
+.Xr rename 2
+first.
+If the
+.Xr rename 2
+operation fails because it's a cross-filesystem rename, then
+.Nm
+will fallback to using
+.Xr copy_file_range 2
+to try and be more performant.
+The owner, mode, and some file flags from the original coredump are preserved
+in the move.
+.Pp
+Note that
+.Nm
+may fail the move for security reasons in some circumstances.
+If the coredump path provided by the kernel is now a symlink instead of a
+regular file, then
+.Nm
+will refuse to move it.
+If the destination exists and is not owned by the same user as the original
+coredump, then
+.Nm
+will refuse to move it.
+If the destination exists and is a symlink, then
+.Nm
+will also refuse to move it.
+.It Dv ucore:path()
+The full path to the coredump.
+.El
+.Sh FILES
+.Pa /var/run/ucored.sock ,
+.Pa /var/ucrash
+.Sh EXIT STATUS
+The
+.Nm
+utility exits 1 if an error occurs in startup.
+.Sh SEE ALSO
+.Xr copy_file_range 2 ,
+.Xr rename 2 ,
+.Xr unlink 2 ,
+.Xr pidfile 3 ,
+.Xr signal 3 ,
+.Xr devd 8

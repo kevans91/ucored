@@ -1,6 +1,7 @@
+MANDIR=	${PREFIX:U/usr/local}/share/man/man
 BINDIR=	${PREFIX:U/usr/local}/sbin
 PROG=	ucored
-MAN=
+MAN=	ucored.8
 
 SRCS=	ucored.c \
 	ucored_lua.c
