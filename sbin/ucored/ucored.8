@@ -56,6 +56,25 @@ At this time, specifying more verbosity than
 .Fl vv
 will have no effect.
 .El
+.Pp
+Note that
+.Nm
+can run either standalone or initiated via
+.Xr inetd 8
+configured to handle its UNIX socket at
+.Pa /var/run/ucored.sock .
+.Pp
+If
+.Nm
+is invoked via some socket-initiation launcher like
+.Xr inetd 8 ,
+then the
+.Va kern.coredump_devctl
+.Xr sysctl 8
+will need to be manually enabled.
+During standalone operation,
+.Nm
+will enable and disable it as needed.
 .Ss Policies
 The
 .Nm
@@ -216,4 +235,6 @@ utility exits 1 if an error occurs in startup.
 .Xr unlink 2 ,
 .Xr pidfile 3 ,
 .Xr signal 3 ,
-.Xr devd 8
+.Xr devd 8 ,
+.Xr inetd 8 ,
+.Xr sysctl 8
