@@ -44,6 +44,7 @@ static void ucored_client_done(struct ucored_client *);
 static void ucored_client_close(struct ucored_client *);
 
 static bool ucored_debug;
+static int ucored_verbose;
 static sig_atomic_t ucored_terminate;
 
 static void
@@ -162,13 +163,16 @@ main(int argc __unused, char *argv[] __unused)
 	struct ucored_client *cl;
 	int ch, error = 1, devctl_prev, kq = -1, sock = -1;
 
-	while ((ch = getopt(argc, argv, "dp:")) != -1) {
+	while ((ch = getopt(argc, argv, "dp:v")) != -1) {
 		switch (ch) {
 		case 'd':
 			ucored_debug = true;
 			break;
 		case 'p':
 			pidfile = optarg;
+			break;
+		case 'v':
+			ucored_verbose++;
 			break;
 		default:
 			usage();
@@ -546,6 +550,11 @@ void
 ucored_log(int priority, const char *fmt, ...)
 {
 	va_list ap;
+
+	if (priority == LOG_INFO && ucored_verbose < 1)
+		return;
+	if (priority == LOG_DEBUG && ucored_verbose < 2)
+		return;
 
 	va_start(ap, fmt);
 	if (ucored_debug) {
