@@ -2,6 +2,7 @@ MANDIR=	${PREFIX:U/usr/local}/share/man/man
 BINDIR=	${PREFIX:U/usr/local}/sbin
 PROG=	ucored
 MAN=	ucored.8
+WARNS?=	6
 
 SRCS=	ucored.c \
 	ucored_lua.c

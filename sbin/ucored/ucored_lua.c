@@ -125,7 +125,7 @@ ucored_lua_mkpath(lua_State *L)
 		*walker = '\0';
 
 		if (mkdir(path, 0755) == -1) {
-			int serrno = errno;
+			serrno = errno;
 
 			/*
 			 * If we already know it was something else, just drop
@@ -287,8 +287,7 @@ static const luaL_Reg ucored_regex_meta[] = {
 
 /* ucore methods */
 static const uint8_t *
-ucored_ucore_strfetch_value(lua_State *L, struct luaucore *self,
-    enum ucore_data_type type)
+ucored_ucore_strfetch_value(struct luaucore *self, enum ucore_data_type type)
 {
 	struct ucored_client_data *sd;
 
@@ -306,23 +305,22 @@ ucored_ucore_strfetch(lua_State *L, struct luaucore *self,
 {
 	const char *str;
 
-	str = (const char *)ucored_ucore_strfetch_value(L, self, type);
+	str = (const char *)ucored_ucore_strfetch_value(self, type);
 	if (str == NULL && dflt != NULL)
 		str = dflt;
 	if (str == NULL)
 		lua_pushnil(L);
 	else
-		lua_pushstring(L, (char *)str);
+		lua_pushstring(L, str);
 	return (1);
 }
 
 static int
 ucored_ucore_attributes(lua_State *L)
 {
-	struct luaucore *self;
 	int type;
 
-	self = luaL_checkudata(L, 1, UCORED_UCOREHANDLE);
+	(void)luaL_checkudata(L, 1, UCORED_UCOREHANDLE);
 	type = lua_getiuservalue(L, 1, UCV_ATTRS);
 	assert(type == LUA_TTABLE);
 	return (1);
@@ -384,7 +382,7 @@ ucored_ucore_filename(lua_State *L)
 	const char *corefile, *delim;
 
 	self = luaL_checkudata(L, 1, UCORED_UCOREHANDLE);
-	corefile = (const char *)ucored_ucore_strfetch_value(L, self, UDT_PATH);
+	corefile = (const char *)ucored_ucore_strfetch_value(self, UDT_PATH);
 
 	delim = strrchr(corefile, '/');
 	if (delim != NULL)
@@ -409,7 +407,7 @@ ucored_ucore_move(lua_State *L)
 
 	fromfd = tofd = -1;
 	self = luaL_checkudata(L, 1, UCORED_UCOREHANDLE);
-	corepath = (const char *)ucored_ucore_strfetch_value(L, self, UDT_PATH);
+	corepath = (const char *)ucored_ucore_strfetch_value(self, UDT_PATH);
 	path = luaL_checkstring(L, 2);
 
 	/*
