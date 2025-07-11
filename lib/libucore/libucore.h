@@ -41,8 +41,13 @@ struct ucore_data_hdr {
 };
 
 struct ucore_data {
-	struct ucore_data_hdr	ud_hdr;
-	uint8_t			ud_data[];
+	struct ucore_data_hdr		ud_hdr;
+
+	/*
+	 * We *might* end up stuffing arbitrary data in here, so bump the
+	 * alignment requirement to avoid problems down the road.
+	 */
+	_Alignas(max_align_t) uint8_t	ud_data[];
 };
 
 bool libucore_send_data(int fd, const void *payload, size_t payloadsz);

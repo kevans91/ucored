@@ -118,7 +118,7 @@ add_segment(enum ucore_data_type type, const void *payload, size_t payloadsz)
 		return (1);
 	}
 
-	useg = malloc(sizeof(*useg) + payloadsz);
+	useg = calloc(1, sizeof(*useg) + payloadsz);
 	if (useg == NULL) {
 		syslog(LOG_ERR, "malloc: %m");
 		return (1);
