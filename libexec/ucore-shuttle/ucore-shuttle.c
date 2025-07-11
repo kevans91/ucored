@@ -72,13 +72,13 @@ resolve_path(int jid, int pid, const char *comm, const char *core,
 	return (corepath);
 }
 
-static int ucored_connect(void);
-
 static int
 ucored_connect(void)
 {
 	struct sockaddr_un sun;
 	size_t ret;
+	uid_t uid;
+	gid_t gid;
 	int sock;
 
 	sock = socket(PF_UNIX, SOCK_STREAM, 0);
@@ -94,6 +94,16 @@ ucored_connect(void)
 	sun.sun_len = SUN_LEN(&sun);
 	if (connect(sock, (const struct sockaddr *)&sun, sizeof(sun)) == -1) {
 		syslog(LOG_ERR, "connect: %m");
+		close(sock);
+		return (-1);
+	}
+
+	if (getpeereid(sock, &uid, &gid) != 0) {
+		syslog(LOG_ERR, "getpeereid: %m");
+		close(sock);
+		return (-1);
+	} else if (uid != 0) {
+		syslog(LOG_ERR, "refusing to talk to ucored owned by %d", uid);
 		close(sock);
 		return (-1);
 	}

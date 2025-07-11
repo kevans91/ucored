@@ -551,8 +551,19 @@ static struct ucored_client *
 ucored_client_alloc(int kq, int clsock)
 {
 	struct ucored_client *cl;
+	uid_t uid;
+	gid_t gid;
 
-	/* XXX Check credentials? */
+	if (getpeereid(clsock, &uid, &gid)  != 0) {
+		ucored_log(LOG_ERR, "getpeereid: %m");
+		close(clsock);
+		return (NULL);
+	} else if (uid != 0) {
+		ucored_log(LOG_ERR, "terminating attempted connection by user %d",
+		    uid);
+		close(clsock);
+		return (NULL);
+	}
 
 	cl = calloc(1, sizeof(*cl));
 	if (cl == NULL) {
