@@ -28,7 +28,6 @@
 #include <libutil.h>
 
 #include "ucored.h"
-#include "libucore.h"
 
 static SLIST_HEAD(, ucored_client) all_clients =
     SLIST_HEAD_INITIALIZER(all_clients);

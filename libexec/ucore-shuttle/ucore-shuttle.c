@@ -20,7 +20,6 @@
 
 #include <jail.h>
 
-#include "ucored.h"
 #include "libucore.h"
 
 struct ucore_shuttle_data {
