@@ -329,7 +329,7 @@ ucore_accept(int kq, int fd, int backlog)
 }
 
 static void
-ucore_fetch(int kq, struct ucored_client *cl, size_t avail)
+ucore_fetch(int kq, struct ucored_client *cl, size_t avail, bool eof)
 {
 	struct ucore_data_hdr datahdr;
 	size_t wanted;
@@ -372,8 +372,7 @@ ucore_fetch(int kq, struct ucored_client *cl, size_t avail)
 		if (!libucore_read_data(cl->cl_fd, buf, bufsz)) {
 			/* XXX Some way to identify the connection closed? */
 			ucored_log(LOG_ERR, "closing connection");
-			ucored_client_close(cl, false);
-			return;
+			goto error;
 		}
 
 		switch (cl->cl_state) {
@@ -385,14 +384,12 @@ ucore_fetch(int kq, struct ucored_client *cl, size_t avail)
 			if (memcmp(cl->cl_hdr.ucore_magic, UCORE_MAGIC,
 			    sizeof(cl->cl_hdr.ucore_magic)) != 0) {
 				ucored_log(LOG_ERR, "bad magic -- closing connection");
-				ucored_client_close(cl, false);
-				return;
+				goto error;
 			}
 
 			if (cl->cl_hdr.ucore_datasegs == 0) {
 				ucored_log(LOG_ERR, "no data -- closing connection");
-				ucored_client_close(cl, false);
-				return;
+				goto error;
 			}
 
 			cl->cl_ndatasegs = cl->cl_hdr.ucore_datasegs;
@@ -402,10 +399,8 @@ ucore_fetch(int kq, struct ucored_client *cl, size_t avail)
 			if (cl->cl_curdataseg == NULL) {
 				ucored_log(LOG_DEBUG, "Segment header received");
 				/* ucored_client_newseg should issue error. */
-				if (!ucored_client_newseg(cl, &datahdr)) {
-					ucored_client_close(cl, false);
-					return;
-				}
+				if (!ucored_client_newseg(cl, &datahdr))
+					goto error;
 			} else {
 				/* Segment is finished. */
 				ucored_log(LOG_DEBUG, "Data segment finished");
@@ -427,9 +422,28 @@ ucore_fetch(int kq, struct ucored_client *cl, size_t avail)
 		}
 	}
 
+	/*
+	 * We don't read() until EOF unless there's some malformed data; it
+	 * could be that they sent some valid data then closed up shop.
+	 */
+	if (eof) {
+		ucored_log(LOG_ERR, "client prematurely disappeared");
+		goto error;
+	}
+
 	/* Re-arm the kevent because we need more data. */
 	watch_socket(kq, cl->cl_fd, cl);
 	ucore_now(&cl->cl_lastseen);
+
+	return;
+error:
+	if (eof) {
+		/* Don't send anymore data! */
+		close(cl->cl_fd);
+		cl->cl_fd = -1;
+	}
+
+	ucored_client_close(cl, false);
 }
 
 static int
@@ -468,7 +482,7 @@ ucored_loop(int kq)
 
 			ucored_log(LOG_DEBUG, "Fetching data from client %d",
 			    fd);
-			ucore_fetch(kq, cl, evt->data);
+			ucore_fetch(kq, cl, evt->data, (evt->flags & EV_EOF) != 0);
 			/* Client may not be valid anymore. */
 			if (ucored_terminate)
 				goto out;
@@ -601,11 +615,13 @@ ucored_client_close(struct ucored_client *cl, bool acked)
 {
 	struct ucored_client_data *cld;
 
-	if (!acked)
-		ucored_client_send_ack(cl, 1);
+	if (cl->cl_fd >= 0) {
+			if (!acked)
+				ucored_client_send_ack(cl, 1);
 
-	close(cl->cl_fd);
-	cl->cl_fd = -1;
+			close(cl->cl_fd);
+			cl->cl_fd = -1;
+	}
 
 	while ((cld = SLIST_FIRST(&cl->cl_datasegs)) != NULL) {
 		SLIST_REMOVE_HEAD(&cl->cl_datasegs, cl_entry);
