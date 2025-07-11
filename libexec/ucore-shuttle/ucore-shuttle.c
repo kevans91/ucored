@@ -15,7 +15,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <syslog.h>
 #include <unistd.h>
 
 #include <jail.h>
@@ -56,7 +55,7 @@ resolve_path(int jid, int pid, const char *comm, const char *core,
 
 	if (jail_getv(0, "jid", strjid, "path", ojailpath,
 	    "name", ojailname, NULL) == -1) {
-		syslog(LOG_ERR,
+		libucore_log(LOG_ERR,
 		    "%s: jid %s for %s[pid=%d] seems to have disappeared",
 		    core, strjid, comm, pid);
 		exit(1);
@@ -83,7 +82,7 @@ ucored_connect(void)
 
 	sock = socket(PF_UNIX, SOCK_STREAM, 0);
 	if (sock == -1) {
-		syslog(LOG_ERR, "socket: %m");
+		libucore_log(LOG_ERR, "socket: %m");
 		return (-1);
 	}
 
@@ -93,17 +92,17 @@ ucored_connect(void)
 
 	sun.sun_len = SUN_LEN(&sun);
 	if (connect(sock, (const struct sockaddr *)&sun, sizeof(sun)) == -1) {
-		syslog(LOG_ERR, "connect: %m");
+		libucore_log(LOG_ERR, "connect: %m");
 		close(sock);
 		return (-1);
 	}
 
 	if (getpeereid(sock, &uid, &gid) != 0) {
-		syslog(LOG_ERR, "getpeereid: %m");
+		libucore_log(LOG_ERR, "getpeereid: %m");
 		close(sock);
 		return (-1);
 	} else if (uid != 0) {
-		syslog(LOG_ERR, "refusing to talk to ucored owned by %d", uid);
+		libucore_log(LOG_ERR, "refusing to talk to ucored owned by %d", uid);
 		close(sock);
 		return (-1);
 	}
@@ -119,10 +118,10 @@ add_segment(enum ucore_data_type type, const void *payload, size_t payloadsz)
 
 	if (sd_nsegments == UCORED_MAXSEGS) {
 		/* XXX Shouldn't be hit. */
-		syslog(LOG_ERR, "too many segments");
+		libucore_log(LOG_ERR, "too many segments");
 		return (1);
 	} else if (payloadsz >= UCORED_MAXSEGSZ) {
-		syslog(LOG_ERR,
+		libucore_log(LOG_ERR,
 		    "payload type %d size %zu exceeds max segment size",
 		    type, payloadsz);
 		return (1);
@@ -130,7 +129,7 @@ add_segment(enum ucore_data_type type, const void *payload, size_t payloadsz)
 
 	useg = calloc(1, sizeof(*useg) + payloadsz);
 	if (useg == NULL) {
-		syslog(LOG_ERR, "malloc: %m");
+		libucore_log(LOG_ERR, "malloc: %m");
 		return (1);
 	}
 
@@ -191,11 +190,11 @@ ucored_recv_ack(int ucored)
 		return (1);
 
 	if (memcmp(ack.ucore_magic, UCORE_MAGIC, sizeof(ack.ucore_magic)) != 0) {
-		syslog(LOG_ERR, "read: bad magic in ack");
+		libucore_log(LOG_ERR, "read: bad magic in ack");
 		return (1);
 	}
 
-	syslog(LOG_INFO, "received ack from ucored with status=%d",
+	libucore_log(LOG_INFO, "received ack from ucored with status=%d",
 	    ack.ucore_status);
 	return (ack.ucore_status);
 }
@@ -220,7 +219,7 @@ main(int argc, char *argv[])
 		case 'P':
 			ppid = strtonum(optarg, 0, INT_MAX, &errstr);
 			if (errstr != NULL) {
-				syslog(LOG_ERR, "ppid: %s", errstr);
+				libucore_log(LOG_ERR, "ppid: %s", errstr);
 				return (1);
 			}
 
@@ -228,7 +227,7 @@ main(int argc, char *argv[])
 		case 'p':
 			pid = strtonum(optarg, 0, INT_MAX, &errstr);
 			if (errstr != NULL) {
-				syslog(LOG_ERR, "pid: %s", errstr);
+				libucore_log(LOG_ERR, "pid: %s", errstr);
 				return (1);
 			}
 
@@ -236,7 +235,7 @@ main(int argc, char *argv[])
 		case 's':
 			signo = strtonum(optarg, 0, INT_MAX, &errstr);
 			if (errstr != NULL) {
-				syslog(LOG_ERR, "signal: %s", errstr);
+				libucore_log(LOG_ERR, "signal: %s", errstr);
 				return (1);
 			}
 
@@ -252,7 +251,7 @@ main(int argc, char *argv[])
 	argv += optind;
 
 	if (argc < 2) {
-		syslog(LOG_ERR, "Missing command or core path");
+		libucore_log(LOG_ERR, "Missing command or core path");
 		return (1);
 	}
 
@@ -260,17 +259,17 @@ main(int argc, char *argv[])
 	core = argv[1];
 
 	if (jail != NULL) {
-			syslog(LOG_INFO,
+			libucore_log(LOG_INFO,
 				"%s: notification received for jail %s process %s[pid=%d]",
 				core, jail, comm, pid);
 	} else {
-			syslog(LOG_INFO,
+			libucore_log(LOG_INFO,
 				"%s: notification received for unjailed process %s[pid=%d]",
 				core, comm, pid);
 	}
 
 	if (jail != NULL && (jid = jail_getid(jail)) == -1) {
-		syslog(LOG_ERR,
+		libucore_log(LOG_ERR,
 		    "%s: jail %s for %s[pid=%d] seems to have disappeared",
 		    core, jail, comm, pid);
 		return (1);
@@ -279,7 +278,7 @@ main(int argc, char *argv[])
 	corepath = resolve_path(jid, pid, comm, core, &jailpath[0],
 	    &jailname[0]);
 	if (corepath == NULL) {
-		syslog(LOG_ERR, "resolve_path: %m");
+		libucore_log(LOG_ERR, "resolve_path: %m");
 		return (1);
 	}
 
