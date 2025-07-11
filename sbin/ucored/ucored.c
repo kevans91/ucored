@@ -16,7 +16,6 @@
 #include <err.h>
 #include <errno.h>
 #include <signal.h>
-#include <stdarg.h>
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -45,8 +44,6 @@ static void ucored_client_done(struct ucored_client *);
 static struct ucored_client *ucored_client_alloc(int, int);
 static void ucored_client_close(struct ucored_client *, bool);
 
-static bool ucored_debug;
-static int ucored_verbose;
 static sig_atomic_t ucored_terminate;
 
 static void
@@ -84,7 +81,7 @@ ucored_sock(void)
 
 	sock = socket(PF_UNIX, SOCK_STREAM, 0);
 	if (sock == -1) {
-		ucored_log(LOG_ERR, "socket: %m");
+		libucore_log(LOG_ERR, "socket: %m");
 		return (-1);
 	}
 
@@ -96,7 +93,7 @@ ucored_sock(void)
 
 	(void)unlink(PATH_UCORED_SOCK);
 	if (bind(sock, (const struct sockaddr *)&sun, sizeof(sun)) == -1) {
-		ucored_log(LOG_ERR, "bind: %m");
+		libucore_log(LOG_ERR, "bind: %m");
 		close(sock);
 		return (-1);
 	}
@@ -122,7 +119,7 @@ watch_socket(int kq, int sock, struct ucored_client *cl)
 	}
 
 	if (kevent(kq, &ev, 1, NULL, 0, NULL) == -1) {
-		ucored_log(LOG_ERR, "kevent: %m");
+		libucore_log(LOG_ERR, "kevent: %m");
 		return (-1);
 	}
 
@@ -142,7 +139,7 @@ devctl_fiddle(int newst)
 	oldlen = sizeof(oldval);
 	if (sysctlbyname(DEVCTL_SYSCTL, &oldval, &oldlen, &newst,
 	    sizeof(newst)) == -1) {
-		ucored_log(LOG_ERR, "sysctlbynme: %m");
+		libucore_log(LOG_ERR, "sysctlbynme: %m");
 		return (-1);
 	}
 
@@ -177,19 +174,19 @@ main(int argc, char *argv[])
 	const char *pidfile = NULL;
 	struct pidfh *pidfh = NULL;
 	struct ucored_client *cl;
-	int ch, error = 1, devctl_prev, kq = -1, sock = -1;
-	bool socket_initiated;
+	int ch, error = 1, devctl_prev, kq = -1, sock = -1, verbose = 0;
+	bool debug = false, socket_initiated;
 
 	while ((ch = getopt(argc, argv, "dp:v")) != -1) {
 		switch (ch) {
 		case 'd':
-			ucored_debug = true;
+			debug = true;
 			break;
 		case 'p':
 			pidfile = optarg;
 			break;
 		case 'v':
-			ucored_verbose++;
+			verbose++;
 			break;
 		default:
 			usage();
@@ -199,6 +196,9 @@ main(int argc, char *argv[])
 
 	argc -= optind;
 	argv += optind;
+
+	libucore_set_debug(debug);
+	libucore_set_verbose(verbose);
 
 	if (argc != 0)
 		usage();
@@ -223,7 +223,7 @@ main(int argc, char *argv[])
 		return (1);
 	}
 
-	if (!ucored_debug && !socket_initiated && daemon(0, 0) == -1) {
+	if (!debug && !socket_initiated && daemon(0, 0) == -1) {
 		fprintf(stderr, "daemon: %s", strerror(errno));
 		pidfile_remove(pidfh);
 		return (1);
@@ -233,7 +233,7 @@ main(int argc, char *argv[])
 
 	kq = kqueue();
 	if (kq == -1) {
-		ucored_log(LOG_ERR, "kqueue: %m");
+		libucore_log(LOG_ERR, "kqueue: %m");
 		goto done_nosock;
 	}
 
@@ -243,7 +243,7 @@ main(int argc, char *argv[])
 			goto done_nosock;
 
 		if (listen(sock, 10) == -1) {
-			ucored_log(LOG_ERR, "listen: %m");
+			libucore_log(LOG_ERR, "listen: %m");
 			goto done;
 		}
 
@@ -312,7 +312,7 @@ ucore_accept(int kq, int fd, int backlog)
 	for (int i = 0; i < backlog; i++) {
 		clsock = accept(fd, NULL, NULL);
 		if (clsock == -1) {
-			ucored_log(LOG_ERR, "accept: %m");
+			libucore_log(LOG_ERR, "accept: %m");
 			return;
 		}
 
@@ -348,17 +348,17 @@ ucore_fetch(int kq, struct ucored_client *cl, size_t avail, bool eof)
 		assert(cl->cl_state != STATE_DONE);
 		switch (cl->cl_state) {
 		case STATE_HDR:
-			ucored_log(LOG_DEBUG, "Reading client header");
+			libucore_log(LOG_DEBUG, "Reading client header");
 			buf = &cl->cl_hdr;
 			bufsz = sizeof(cl->cl_hdr);
 			break;
 		case STATE_DATASEGS:
 			if (cl->cl_curdataseg == NULL) {
-				ucored_log(LOG_DEBUG, "Reading data segment header");
+				libucore_log(LOG_DEBUG, "Reading data segment header");
 				buf = &datahdr;
 				bufsz = sizeof(datahdr);
 			} else {
-				ucored_log(LOG_DEBUG, "Reading data segment body");
+				libucore_log(LOG_DEBUG, "Reading data segment body");
 				buf = &cl->cl_curdataseg->cl_data.ud_data;
 				bufsz = cl->cl_curdataseg->cl_data.ud_hdr.uhdr_size;
 			}
@@ -371,24 +371,24 @@ ucore_fetch(int kq, struct ucored_client *cl, size_t avail, bool eof)
 
 		if (!libucore_read_data(cl->cl_fd, buf, bufsz)) {
 			/* XXX Some way to identify the connection closed? */
-			ucored_log(LOG_ERR, "closing connection");
+			libucore_log(LOG_ERR, "closing connection");
 			goto error;
 		}
 
 		switch (cl->cl_state) {
 		case STATE_HDR:
 			/* Validate the header we received. */
-			ucored_log(LOG_DEBUG, "Validating header");
+			libucore_log(LOG_DEBUG, "Validating header");
 
 			buf = &cl->cl_hdr;
 			if (memcmp(cl->cl_hdr.ucore_magic, UCORE_MAGIC,
 			    sizeof(cl->cl_hdr.ucore_magic)) != 0) {
-				ucored_log(LOG_ERR, "bad magic -- closing connection");
+				libucore_log(LOG_ERR, "bad magic -- closing connection");
 				goto error;
 			}
 
 			if (cl->cl_hdr.ucore_datasegs == 0) {
-				ucored_log(LOG_ERR, "no data -- closing connection");
+				libucore_log(LOG_ERR, "no data -- closing connection");
 				goto error;
 			}
 
@@ -397,13 +397,13 @@ ucore_fetch(int kq, struct ucored_client *cl, size_t avail, bool eof)
 			break;
 		case STATE_DATASEGS:
 			if (cl->cl_curdataseg == NULL) {
-				ucored_log(LOG_DEBUG, "Segment header received");
+				libucore_log(LOG_DEBUG, "Segment header received");
 				/* ucored_client_newseg should issue error. */
 				if (!ucored_client_newseg(cl, &datahdr))
 					goto error;
 			} else {
 				/* Segment is finished. */
-				ucored_log(LOG_DEBUG, "Data segment finished");
+				libucore_log(LOG_DEBUG, "Data segment finished");
 				cl->cl_datasegs_recvd++;
 				SLIST_INSERT_HEAD(&cl->cl_datasegs,
 				    cl->cl_curdataseg, cl_entry);
@@ -427,7 +427,7 @@ ucore_fetch(int kq, struct ucored_client *cl, size_t avail, bool eof)
 	 * could be that they sent some valid data then closed up shop.
 	 */
 	if (eof) {
-		ucored_log(LOG_ERR, "client prematurely disappeared");
+		libucore_log(LOG_ERR, "client prematurely disappeared");
 		goto error;
 	}
 
@@ -464,7 +464,7 @@ ucored_loop(int kq)
 			if (errno == EINTR)
 				continue;
 
-			ucored_log(LOG_ERR, "kevent: %m");
+			libucore_log(LOG_ERR, "kevent: %m");
 			return (1);
 		}
 
@@ -480,7 +480,7 @@ ucored_loop(int kq)
 				continue;
 			}
 
-			ucored_log(LOG_DEBUG, "Fetching data from client %d",
+			libucore_log(LOG_DEBUG, "Fetching data from client %d",
 			    fd);
 			ucore_fetch(kq, cl, evt->data, (evt->flags & EV_EOF) != 0);
 			/* Client may not be valid anymore. */
@@ -525,7 +525,7 @@ ucored_client_newseg(struct ucored_client *cl, struct ucore_data_hdr *hdr)
 
 	assert(cl->cl_curdataseg == NULL);
 	if (hdr->uhdr_size > UCORED_MAXSEGSZ) {
-		ucored_log(LOG_ERR,
+		libucore_log(LOG_ERR,
 		    "overly large segment (%zu) -- closing connection",
 		    hdr->uhdr_size);
 		return (false);
@@ -533,7 +533,7 @@ ucored_client_newseg(struct ucored_client *cl, struct ucore_data_hdr *hdr)
 
 	dataseg = malloc(sizeof(struct ucored_client_data) + hdr->uhdr_size);
 	if (dataseg == NULL) {
-		ucored_log(LOG_ERR, "malloc newseg: %m -- closing connection");
+		libucore_log(LOG_ERR, "malloc newseg: %m -- closing connection");
 		return (false);
 	}
 
@@ -555,7 +555,7 @@ ucored_client_send_ack(struct ucored_client *cl, int status)
 
 	memcpy(&ack.ucore_magic, UCORE_MAGIC, sizeof(ack.ucore_magic));
 	if (!libucore_send_data(cl->cl_fd, &ack, sizeof(ack)))
-		ucored_log(LOG_ERR, "Failed to ack with status=%d", status);
+		libucore_log(LOG_ERR, "Failed to ack with status=%d", status);
 }
 
 static void
@@ -567,7 +567,7 @@ ucored_client_done(struct ucored_client *cl)
 	shutdown(cl->cl_fd, SHUT_RD);
 	ucored_client_send_ack(cl, 0);
 
-	ucored_log(LOG_INFO, "Core details received [pid=%d, ppid=%d, signo=%d]",
+	libucore_log(LOG_INFO, "Core details received [pid=%d, ppid=%d, signo=%d]",
 	    cl->cl_hdr.ucore_pid, cl->cl_hdr.ucore_ppid, cl->cl_hdr.ucore_signo);
 
 	/* XXX Check return... fork? */
@@ -584,11 +584,11 @@ ucored_client_alloc(int kq, int clsock)
 	gid_t gid;
 
 	if (getpeereid(clsock, &uid, &gid)  != 0) {
-		ucored_log(LOG_ERR, "getpeereid: %m");
+		libucore_log(LOG_ERR, "getpeereid: %m");
 		close(clsock);
 		return (NULL);
 	} else if (uid != 0) {
-		ucored_log(LOG_ERR, "terminating attempted connection by user %d",
+		libucore_log(LOG_ERR, "terminating attempted connection by user %d",
 		    uid);
 		close(clsock);
 		return (NULL);
@@ -596,7 +596,7 @@ ucored_client_alloc(int kq, int clsock)
 
 	cl = calloc(1, sizeof(*cl));
 	if (cl == NULL) {
-		ucored_log(LOG_ERR, "malloc: %m");
+		libucore_log(LOG_ERR, "malloc: %m");
 		close(clsock);
 		return (NULL);
 	}
@@ -631,40 +631,4 @@ ucored_client_close(struct ucored_client *cl, bool acked)
 	SLIST_REMOVE(&all_clients, cl, ucored_client, cl_client);
 
 	free(cl);
-}
-
-void
-ucored_log(int priority, const char *fmt, ...)
-{
-	va_list ap;
-
-	if (priority == LOG_INFO && ucored_verbose < 1)
-		return;
-	if (priority == LOG_DEBUG && ucored_verbose < 2)
-		return;
-
-	va_start(ap, fmt);
-	if (ucored_debug) {
-		FILE *fp;
-
-		switch (priority) {
-		case LOG_NOTICE:
-		case LOG_INFO:
-		case LOG_DEBUG:
-			fp = stdout;
-			break;
-		case LOG_ERR:
-		case LOG_WARNING:
-		default:
-			fp = stderr;
-			break;
-		}
-
-		vfprintf(fp, fmt, ap);
-		/* syslog messages omit the newline; just toss one in. */
-		fputc('\n', fp);
-	} else {
-		vsyslog(priority, fmt, ap);
-	}
-	va_end(ap);
 }

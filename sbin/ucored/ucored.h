@@ -38,9 +38,6 @@ struct ucored_client {
 	enum ucored_state			cl_state;
 };
 
-/* ucored.c */
-void ucored_log(int, const char *, ...) __printflike(2, 3);
-
 /* ucored_lua.c */
 bool ucored_lua_init(void);
 bool ucored_lua_handle(struct ucored_client *);

@@ -8,6 +8,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <syslog.h>
 
 #define	PATH_UCORED_SOCK	"/var/run/ucored.sock"
 
@@ -64,3 +65,7 @@ struct ucore_data {
 
 bool libucore_send_data(int fd, const void *payload, size_t payloadsz);
 bool libucore_read_data(int fd, void *payload, size_t payloadsz);
+
+void libucore_set_debug(bool dbg);
+void libucore_set_verbose(int verbose);
+void libucore_log(int priority, const char *fmt, ...) __printflike(2, 3);

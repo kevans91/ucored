@@ -10,9 +10,13 @@
 #include <errno.h>
 #include <unistd.h>
 #include <stdbool.h>
-#include <syslog.h>
+#include <stdarg.h>
+#include <stdio.h>
 
 #include "libucore.h"
+
+static bool libucore_dbg;
+static int libucore_verbose;
 
 bool
 libucore_send_data(int fd, const void *payload, size_t payloadsz)
@@ -63,4 +67,52 @@ libucore_read_data(int fd, void *payload, size_t payloadsz)
 	}
 
 	return (true);
+}
+
+void
+libucore_set_debug(bool dbg)
+{
+	libucore_dbg = dbg;
+}
+
+void
+libucore_set_verbose(int verbose)
+{
+	libucore_verbose = verbose;
+}
+
+void
+libucore_log(int priority, const char *fmt, ...)
+{
+	va_list ap;
+
+	if (priority == LOG_INFO && libucore_verbose < 1)
+		return;
+	if (priority == LOG_DEBUG && libucore_verbose < 2)
+		return;
+
+	va_start(ap, fmt);
+	if (libucore_dbg) {
+		FILE *fp;
+
+		switch (priority) {
+		case LOG_NOTICE:
+		case LOG_INFO:
+		case LOG_DEBUG:
+			fp = stdout;
+			break;
+		case LOG_ERR:
+		case LOG_WARNING:
+		default:
+			fp = stderr;
+			break;
+		}
+
+		vfprintf(fp, fmt, ap);
+		/* syslog messages omit the newline; just toss one in. */
+		fputc('\n', fp);
+	} else {
+		vsyslog(priority, fmt, ap);
+	}
+	va_end(ap);
 }
