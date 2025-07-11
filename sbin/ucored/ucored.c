@@ -43,7 +43,7 @@ static bool ucored_client_newseg(struct ucored_client *,
     struct ucore_data_hdr *);
 static void ucored_client_done(struct ucored_client *);
 static struct ucored_client *ucored_client_alloc(int, int);
-static void ucored_client_close(struct ucored_client *);
+static void ucored_client_close(struct ucored_client *, bool);
 
 static bool ucored_debug;
 static int ucored_verbose;
@@ -276,7 +276,7 @@ main(int argc, char *argv[])
 		(void)devctl_fiddle(0);
 
 	while ((cl = SLIST_FIRST(&all_clients)) != NULL)
-		ucored_client_close(cl);
+		ucored_client_close(cl, false);
 
 done:
 	if (!socket_initiated)
@@ -372,7 +372,7 @@ ucore_fetch(int kq, struct ucored_client *cl, size_t avail)
 		if (!libucore_read_data(cl->cl_fd, buf, bufsz)) {
 			/* XXX Some way to identify the connection closed? */
 			ucored_log(LOG_ERR, "closing connection");
-			ucored_client_close(cl);
+			ucored_client_close(cl, false);
 			return;
 		}
 
@@ -385,13 +385,13 @@ ucore_fetch(int kq, struct ucored_client *cl, size_t avail)
 			if (memcmp(cl->cl_hdr.ucore_magic, UCORE_MAGIC,
 			    sizeof(cl->cl_hdr.ucore_magic)) != 0) {
 				ucored_log(LOG_ERR, "bad magic -- closing connection");
-				ucored_client_close(cl);
+				ucored_client_close(cl, false);
 				return;
 			}
 
 			if (cl->cl_hdr.ucore_datasegs == 0) {
 				ucored_log(LOG_ERR, "no data -- closing connection");
-				ucored_client_close(cl);
+				ucored_client_close(cl, false);
 				return;
 			}
 
@@ -403,7 +403,7 @@ ucore_fetch(int kq, struct ucored_client *cl, size_t avail)
 				ucored_log(LOG_DEBUG, "Segment header received");
 				/* ucored_client_newseg should issue error. */
 				if (!ucored_client_newseg(cl, &datahdr)) {
-					ucored_client_close(cl);
+					ucored_client_close(cl, false);
 					return;
 				}
 			} else {
@@ -529,14 +529,29 @@ ucored_client_newseg(struct ucored_client *cl, struct ucore_data_hdr *hdr)
 	return (true);
 }
 
+/*
+ * Send an ack with the indicated status, to be interpreted as a normal exit
+ * status for the time being.  That is, 0 is 'good', non-zero is an
+ * 'error condition'. We don't really define those non-zero values at the moment.
+ */
+static void
+ucored_client_send_ack(struct ucored_client *cl, int status)
+{
+	struct ucore_ack ack = { .ucore_status = status };
+
+	memcpy(&ack.ucore_magic, UCORE_MAGIC, sizeof(ack.ucore_magic));
+	if (!libucore_send_data(cl->cl_fd, &ack, sizeof(ack)))
+		ucored_log(LOG_ERR, "Failed to ack with status=%d", status);
+}
+
 static void
 ucored_client_done(struct ucored_client *cl)
 {
 
 	assert(cl->cl_state == STATE_DONE);
 
-	/* XXX Ack it.  */
 	shutdown(cl->cl_fd, SHUT_RD);
+	ucored_client_send_ack(cl, 0);
 
 	ucored_log(LOG_INFO, "Core details received [pid=%d, ppid=%d, signo=%d]",
 	    cl->cl_hdr.ucore_pid, cl->cl_hdr.ucore_ppid, cl->cl_hdr.ucore_signo);
@@ -544,7 +559,7 @@ ucored_client_done(struct ucored_client *cl)
 	/* XXX Check return... fork? */
 	ucored_lua_handle(cl);
 
-	ucored_client_close(cl);
+	ucored_client_close(cl, true);
 }
 
 static struct ucored_client *
@@ -582,9 +597,12 @@ ucored_client_alloc(int kq, int clsock)
 }
 
 static void
-ucored_client_close(struct ucored_client *cl)
+ucored_client_close(struct ucored_client *cl, bool acked)
 {
 	struct ucored_client_data *cld;
+
+	if (!acked)
+		ucored_client_send_ack(cl, 1);
 
 	close(cl->cl_fd);
 	cl->cl_fd = -1;

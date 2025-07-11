@@ -182,6 +182,24 @@ ucored_send(int ucored, int jid, int ppid, int pid, int signo)
 	return (0);
 }
 
+static int
+ucored_recv_ack(int ucored)
+{
+	struct ucore_ack ack;
+
+	if (!libucore_read_data(ucored, &ack, sizeof(ack)))
+		return (1);
+
+	if (memcmp(ack.ucore_magic, UCORE_MAGIC, sizeof(ack.ucore_magic)) != 0) {
+		syslog(LOG_ERR, "read: bad magic in ack");
+		return (1);
+	}
+
+	syslog(LOG_INFO, "received ack from ucored with status=%d",
+	    ack.ucore_status);
+	return (ack.ucore_status);
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -288,6 +306,11 @@ main(int argc, char *argv[])
 	}
 
 	error = ucored_send(ucored, jid, ppid, pid, signo);
+
+	shutdown(ucored, SHUT_WR);
+	if (error == 0)
+		error = ucored_recv_ack(ucored);
+	shutdown(ucored, SHUT_RD);
 out:
 	if (corepath != NULL)
 		free(corepath);
