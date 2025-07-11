@@ -4,6 +4,9 @@ PROG=	ucored
 MAN=	ucored.8
 WARNS?=	6
 
+SRCTOP=	${.CURDIR}/../..
+LIBUCORE=	${SRCTOP}/lib/libucore/libucore.a
+
 SRCS=	ucored.c \
 	ucored_lua.c
 
@@ -20,7 +23,7 @@ CFLAGS+=	-DUCORED -I${LUAINC}
 CFLAGS+=	-DUCORED_LUAFILE="\"${SHAREDIR}/ucored.lua\""
 CFLAGS+=	-DUCORED_LUAPATH="\"${SHAREDIR}/?.lua;;\""
 
-LDADD+=	-lutil ${LUALIB}
-DPADD+=	-lutil ${LUALIB}
+LDADD+=	-lutil ${LUALIB} ${LIBUCORE}
+DPADD+=	-lutil ${LUALIB} ${LIBUCORE}
 
 .include <bsd.prog.mk>

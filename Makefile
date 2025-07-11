@@ -1,3 +1,8 @@
+SUBDIR_PARALLEL=
+
+SUBDIR+=	lib
+SUBDIR+=	.WAIT
+
 SUBDIR+=	devd
 SUBDIR+=	libexec
 SUBDIR+=	rc.d
