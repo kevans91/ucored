@@ -91,6 +91,11 @@ libucore_log(int priority, const char *fmt, ...)
 	if (priority == LOG_DEBUG && libucore_verbose < 2)
 		return;
 
+	/*
+	 * Note that a lot of our format strings use %m, so we need to be
+	 * careful to save/restore errno if we're going to do something that
+	 * might disturb it before stdio(3)/syslog(3) has a chance to grab it.
+	 */
 	va_start(ap, fmt);
 	if (libucore_dbg) {
 		FILE *fp;
