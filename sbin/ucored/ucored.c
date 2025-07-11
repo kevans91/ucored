@@ -85,6 +85,12 @@ ucored_sock(void)
 		return (-1);
 	}
 
+	if (fchmod(sock, 0600) == -1) {
+		libucore_log(LOG_ERR, "fchmod: %m");
+		close(sock);
+		return (-1);
+	}
+
 	sun.sun_family = AF_UNIX;
 	ret = strlcpy(&sun.sun_path[0], PATH_UCORED_SOCK, sizeof(sun.sun_path));
 	assert(ret < sizeof(sun.sun_path));
