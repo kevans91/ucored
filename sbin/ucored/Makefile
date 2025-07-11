@@ -19,7 +19,7 @@ FILESDIR=	${SHAREDIR}
 LUAINC?=	${LOCALBASE:U/usr/local}/include/lua54
 LUALIB?=	-L/usr/local/lib -llua-5.4
 
-CFLAGS+=	-DUCORED -I${LUAINC}
+CFLAGS+=	-DUCORED -I${LUAINC} -I${SRCTOP}/lib/libucore
 CFLAGS+=	-DUCORED_LUAFILE="\"${SHAREDIR}/ucored.lua\""
 CFLAGS+=	-DUCORED_LUAPATH="\"${SHAREDIR}/?.lua;;\""
 

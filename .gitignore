@@ -2,4 +2,5 @@
 *.full
 *.debug
 *.pieo
-.depend
+*.o
+.depend*

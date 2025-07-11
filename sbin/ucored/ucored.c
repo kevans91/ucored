@@ -28,6 +28,7 @@
 #include <libutil.h>
 
 #include "ucored.h"
+#include "libucore.h"
 
 static SLIST_HEAD(, ucored_client) all_clients =
     SLIST_HEAD_INITIALIZER(all_clients);
@@ -337,7 +338,6 @@ ucore_fetch(int kq, struct ucored_client *cl, size_t avail)
 	while (avail >= (wanted = ucored_client_lowat(cl))) {
 		void *buf;
 		size_t bufsz;
-		ssize_t readsz;
 
 		/*
 		 * When we're signaled to terminate, just break out immediately.
@@ -370,21 +370,9 @@ ucore_fetch(int kq, struct ucored_client *cl, size_t avail)
 			break;
 		}
 
-		readsz = read(cl->cl_fd, buf, bufsz);
-		if (readsz < 0) {
-			if (errno == EINTR)
-				continue;
-
-			ucored_log(LOG_ERR, "read: %m -- closing connection");
-			ucored_client_close(cl);
-			return;
-		} else if ((size_t)readsz < bufsz) {
-			/*
-			 * The ucored protocol describes the exact amount of
-			 * data we *should* expect to receive, so short reads
-			 * mean that something is afoot.
-			 */
-			ucored_log(LOG_ERR, "read: short read -- closing connection");
+		if (!libucore_read_data(cl->cl_fd, buf, bufsz)) {
+			/* XXX Some way to identify the connection closed? */
+			ucored_log(LOG_ERR, "closing connection");
 			ucored_client_close(cl);
 			return;
 		}

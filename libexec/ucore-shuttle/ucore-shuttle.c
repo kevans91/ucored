@@ -21,6 +21,7 @@
 #include <jail.h>
 
 #include "ucored.h"
+#include "libucore.h"
 
 struct ucore_shuttle_data {
 	SLIST_ENTRY(ucore_shuttle_data)	sd_entry;
@@ -135,35 +136,6 @@ add_segment(enum ucore_data_type type, const void *payload, size_t payloadsz)
 	return (0);
 }
 
-static bool
-ucored_send_data(int ucored, const void *payload, size_t payloadsz)
-{
-	size_t written = 0;
-
-	while (written < payloadsz) {
-		ssize_t writesz;
-
-		assert(payloadsz != 0);
-		writesz = write(ucored, payload, payloadsz);
-		if (writesz < 0) {
-			if (errno == EINTR)
-				continue;
-
-			syslog(LOG_ERR, "write: %m");
-			return (false);
-		} else if (writesz == 0) {
-			syslog(LOG_ERR, "write: premature EOF");
-			return (false);
-		}
-
-		written += writesz;
-		payload = (const uint8_t *)payload + writesz;
-		payloadsz -= writesz;
-	}
-
-	return (true);
-}
-
 static int
 ucored_send(int ucored, int jid, int ppid, int pid, int signo)
 {
@@ -178,7 +150,7 @@ ucored_send(int ucored, int jid, int ppid, int pid, int signo)
 	uc.ucore_pid = pid;
 	uc.ucore_signo = signo;
 
-	if (!ucored_send_data(ucored, &uc, sizeof(uc)))
+	if (!libucore_send_data(ucored, &uc, sizeof(uc)))
 		return (1);
 
 	SLIST_FOREACH(sd, &sd_segments, sd_entry) {
@@ -190,10 +162,10 @@ ucored_send(int ucored, int jid, int ppid, int pid, int signo)
 		 * segment size.
 		 */
 		ud = &sd->sd_data;
-		if (!ucored_send_data(ucored, &ud->ud_hdr,
+		if (!libucore_send_data(ucored, &ud->ud_hdr,
 		    sizeof(struct ucore_data_hdr)))
 			return (false);
-		if (!ucored_send_data(ucored, &ud->ud_data,
+		if (!libucore_send_data(ucored, &ud->ud_data,
 		    ud->ud_hdr.uhdr_size))
 			return (false);
 	}

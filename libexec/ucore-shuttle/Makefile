@@ -7,8 +7,7 @@ WARNS?=	6
 SRCTOP=	${.CURDIR}/../..
 LIBUCORE=	${SRCTOP}/lib/libucore/libucore.a
 
-
-CFLAGS+=	-I${.CURDIR}/../../sbin/ucored
+CFLAGS+=	-I${SRCTOP}/sbin/ucored -I${SRCTOP}/lib/libucore
 LDADD+=	-ljail ${LIBUCORE}
 DPADD+=	-ljail ${LIBUCORE}
 
