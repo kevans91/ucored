@@ -3,7 +3,7 @@
 .\"
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
-.Dd July 6, 2025
+.Dd July 18, 2025
 .Dt UCORED 8
 .Os
 .Sh NAME
@@ -114,6 +114,18 @@ See
 below for more details on how
 .Nm
 may augment paths.
+.It Dv pipe
+Pipes the core file to another
+.Ar command .
+The
+.Ar command
+must be an absolute path, as the working directory of
+.Nm
+is undefined.
+The
+.Ar command
+may either be a string that will be word-split based on standard shell rules, or
+a table of arguments.
 .It Dv script
 Specifies a script that will process the coredump.
 The

@@ -95,6 +95,60 @@ local function process_destpath(ucore, path)
 	return path
 end
 
+local function command_shell_split(command)
+	local tbl = {}
+	local arg = ""
+	local escaped
+	local quoted
+
+	for i = 1, #command do
+		local c = command:sub(i, i)
+
+		if escaped then
+			arg = arg .. c
+			escaped = false
+			goto next
+		elseif c == "\\" then
+			escaped = true
+			goto next
+		end
+
+		if c == "\"" or c == "'" then
+			if quoted then
+				if c == quoted then
+					quoted = nil
+				else
+					arg = arg .. c
+				end
+			else
+				-- Quotes don't go into our argument, they just
+				-- stop us from breaking whitespace mostly.
+				quoted = c
+			end
+
+			goto next
+		end
+
+		-- Word split on spaces
+		if c == " " and not quoted then
+			tbl[#tbl + 1] = arg
+			arg = ""
+			goto next
+		end
+
+		-- Either we're quoted, or we're not a space.  Just append.
+		arg = arg .. c
+
+		::next::
+	end
+
+	if #arg > 0 then
+		tbl[#tbl + 1] = arg
+	end
+
+	return tbl
+end
+
 local action_handlers = {
 	discard = {
 		apply = function(_, ucore)
@@ -138,6 +192,43 @@ local action_handlers = {
 			end
 
 			return true
+		end,
+	},
+	pipe = {
+		apply = function(action, ucore)
+			local cmd = {}
+			for _, arg in ipairs(action.command) do
+				cmd[#cmd + 1] = replace_symbols(ucore, arg)
+			end
+
+			local path = ucore:path()
+			local ok, err = ucore:pipe(table.unpack(cmd))
+			local cmdname = cmd[1]
+
+			if not ok then
+				core.error(path .. " pipe (" .. cmdname ..
+				    "): " .. err)
+			else
+				core.notice(path .. " piped to " ..
+				    cmdname)
+			end
+
+			return ok
+		end,
+		validate = function(action)
+			local command = action.command
+
+			if type(command) ~= "table" then
+				command = command_shell_split(command)
+			end
+
+			if #command == 0 then
+				error("Pipe directives must specify a command")
+			elseif not command[1]:match("^/") then
+				error("Pipe commands must be an absolute path")
+			end
+
+			action.command = command
 		end,
 	},
 	script = {

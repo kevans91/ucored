@@ -6,10 +6,12 @@
 
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <err.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <regex.h>
+#include <spawn.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -537,6 +539,137 @@ ucored_ucore_path(lua_State *L)
 	return (ucored_ucore_strfetch(L, self, UDT_PATH, NULL));
 }
 
+static int
+ucored_spawn_pipe(pid_t *pid, int corefd, char *const *argv,
+    const char **errstrp)
+{
+	/* Maybe not portable, but it works on FreeBSD. */
+	posix_spawn_file_actions_t fa = NULL;
+	extern char **environ;
+	int devnull = -1, error;
+
+	devnull = open("/dev/null", O_RDWR);
+	if (devnull < 0)
+		goto failed;
+
+	if (posix_spawn_file_actions_init(&fa) == -1)
+		goto failed;
+
+	/* Set up stdin, stdout, fileno and close everything else. */
+	if (posix_spawn_file_actions_adddup2(&fa, corefd, STDIN_FILENO) == -1)
+		goto failed;
+	if (posix_spawn_file_actions_adddup2(&fa, devnull, STDOUT_FILENO) == -1)
+		goto failed;
+	if (posix_spawn_file_actions_adddup2(&fa, devnull, STDERR_FILENO) == -1)
+		goto failed;
+	if (posix_spawn_file_actions_addclosefrom_np(&fa, 3) == -1)
+		goto failed;
+
+	error = posix_spawn(pid, argv[0], &fa, NULL, argv, environ);
+	if (error != 0) {
+		*errstrp = strerror(error);
+		error = -1;
+	}
+
+	(void)posix_spawn_file_actions_destroy(&fa);
+	close(devnull);
+
+	return (error);
+failed:
+	*errstrp = strerror(errno);
+	if (devnull >= 0)
+		close(devnull);
+	if (fa != NULL)
+		(void)posix_spawn_file_actions_destroy(&fa);
+	return (-1);
+}
+
+static int
+ucored_ucore_pipe(lua_State *L)
+{
+	struct luaucore *self;
+	const char **argv;
+	const char *corepath, *errstr = NULL;
+	int argc, corefd = -1, status;
+	pid_t childpid, wpid;
+
+	self = luaL_checkudata(L, 1, UCORED_UCOREHANDLE);
+	corepath = (const char *)ucored_ucore_strfetch_value(self, UDT_PATH);
+
+	argc = lua_gettop(L) - 1;
+	if (argc == 0) {
+		luaL_pushfail(L);
+		lua_pushstring(L, "Expected command args after ucore");
+		return (2);
+	}
+
+	corefd = open(corepath, O_RDONLY);
+	if (corefd == -1) {
+		int serrno = errno;
+
+		luaL_pushfail(L);
+		lua_pushfstring(L, "%s: open: %s", corepath, strerror(serrno));
+		return (2);
+	}
+
+	argv = calloc(argc + 1, sizeof(*argv));
+	if (argv == NULL) {
+		int serrno = errno;
+
+		close(corefd);
+		luaL_pushfail(L);
+		lua_pushfstring(L, "calloc: %s", strerror(serrno));
+		return (2);
+	}
+
+	for (int i = 0; i < argc; i++) {
+		argv[i] = lua_tostring(L, i + 2);
+		if (argv[i] == NULL) {
+			close(corefd);
+			free(argv);
+
+			luaL_pushfail(L);
+			lua_pushfstring(L, "Argument at index %d not a string",
+			    i + 1);
+			return (2);
+		}
+	}
+
+	if (ucored_spawn_pipe(&childpid, corefd, __DECONST(char *const *, argv),
+	    &errstr) == -1) {
+		close(corefd);
+		luaL_pushfail(L);
+		lua_pushstring(L, errstr);
+		return (2);
+	}
+
+	close(corefd);
+	while ((wpid = waitpid(childpid, &status, 0)) != childpid) {
+		int serrno = errno;
+
+		if (serrno == EINTR)
+			continue;
+		luaL_pushfail(L);
+		lua_pushfstring(L, "waitpid: %s", strerror(serrno));
+		return (2);
+	}
+
+	if (!WIFEXITED(status)) {
+		luaL_pushfail(L);
+		lua_pushfstring(L, "process %d signalled with signo %d",
+		    childpid, WTERMSIG(status));
+		return (2);
+	} else if (WEXITSTATUS(status) != 0) {
+		luaL_pushfail(L);
+		lua_pushfstring(L, "process %d exited with status %d",
+		    childpid, WEXITSTATUS(status));
+		return (2);
+	}
+
+	lua_pushboolean(L, 1);
+	return (1);
+}
+
 #define	UCORE_SIMPLE(n)	{ #n, ucored_ucore_ ## n }
 static const luaL_Reg ucored_ucore[] = {
 	UCORE_SIMPLE(attributes),
@@ -545,6 +678,7 @@ static const luaL_Reg ucored_ucore[] = {
 	UCORE_SIMPLE(filename),
 	UCORE_SIMPLE(move),
 	UCORE_SIMPLE(path),
+	UCORE_SIMPLE(pipe),
 	{ NULL, NULL },
 };
 
