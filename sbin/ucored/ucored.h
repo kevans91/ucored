@@ -10,6 +10,7 @@
 #include <sys/param.h>
 #include <sys/queue.h>
 
+#include <signal.h>
 #include <stdbool.h>
 #include <syslog.h>
 

@@ -9,7 +9,6 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/sysctl.h>
-#include <sys/queue.h>
 #include <sys/un.h>
 
 #include <assert.h>
