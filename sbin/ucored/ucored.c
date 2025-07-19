@@ -40,7 +40,7 @@
 
 static int ucored_loop(int);
 
-static sig_atomic_t ucored_terminate;
+sig_atomic_t ucored_terminate;
 
 static void
 handle_signal(int signo __unused)
@@ -328,124 +328,6 @@ ucored_accept(int kq, int fd, int backlog)
 	}
 }
 
-static void
-ucored_fetch(int kq, struct ucored_client *cl, size_t avail, bool eof)
-{
-	struct ucore_data_hdr datahdr;
-	size_t wanted;
-
-	while (avail >= (wanted = ucored_client_lowat(cl))) {
-		void *buf;
-		size_t bufsz;
-
-		/*
-		 * When we're signaled to terminate, just break out immediately.
-		 */
-		atomic_signal_fence(memory_order_acquire);
-		if (ucored_terminate)
-			return;
-
-		assert(cl->cl_state != STATE_DONE);
-		switch (cl->cl_state) {
-		case STATE_HDR:
-			libucore_log(LOG_DEBUG, "Reading client header");
-			buf = &cl->cl_hdr;
-			bufsz = sizeof(cl->cl_hdr);
-			break;
-		case STATE_DATASEGS:
-			if (cl->cl_curdataseg == NULL) {
-				libucore_log(LOG_DEBUG, "Reading data segment header");
-				buf = &datahdr;
-				bufsz = sizeof(datahdr);
-			} else {
-				libucore_log(LOG_DEBUG, "Reading data segment body");
-				buf = &cl->cl_curdataseg->cl_data.ud_data;
-				bufsz = cl->cl_curdataseg->cl_data.ud_hdr.uhdr_size;
-			}
-
-			break;
-		case STATE_DONE:
-			__assert_unreachable();
-			break;
-		}
-
-		if (!libucore_read_data(cl->cl_fd, buf, bufsz)) {
-			/* XXX Some way to identify the connection closed? */
-			libucore_log(LOG_ERR, "closing connection");
-			goto error;
-		}
-
-		switch (cl->cl_state) {
-		case STATE_HDR:
-			/* Validate the header we received. */
-			libucore_log(LOG_DEBUG, "Validating header");
-
-			buf = &cl->cl_hdr;
-			if (memcmp(cl->cl_hdr.ucore_magic, UCORE_MAGIC,
-			    sizeof(cl->cl_hdr.ucore_magic)) != 0) {
-				libucore_log(LOG_ERR, "bad magic -- closing connection");
-				goto error;
-			}
-
-			if (cl->cl_hdr.ucore_datasegs == 0) {
-				libucore_log(LOG_ERR, "no data -- closing connection");
-				goto error;
-			}
-
-			cl->cl_ndatasegs = cl->cl_hdr.ucore_datasegs;
-			cl->cl_state = STATE_DATASEGS;
-			break;
-		case STATE_DATASEGS:
-			if (cl->cl_curdataseg == NULL) {
-				libucore_log(LOG_DEBUG, "Segment header received");
-				/* ucored_client_newseg should issue error. */
-				if (!ucored_client_newseg(cl, &datahdr))
-					goto error;
-			} else {
-				/* Segment is finished. */
-				libucore_log(LOG_DEBUG, "Data segment finished");
-				cl->cl_datasegs_recvd++;
-				SLIST_INSERT_HEAD(&cl->cl_datasegs,
-				    cl->cl_curdataseg, cl_entry);
-				cl->cl_curdataseg = NULL;
-
-				if (cl->cl_datasegs_recvd == cl->cl_ndatasegs) {
-					cl->cl_state = STATE_DONE;
-					ucored_client_done(cl);
-					return;
-				}
-			}
-
-			break;
-		case STATE_DONE:
-			__assert_unreachable();
-		}
-	}
-
-	/*
-	 * We don't read() until EOF unless there's some malformed data; it
-	 * could be that they sent some valid data then closed up shop.
-	 */
-	if (eof) {
-		libucore_log(LOG_ERR, "client prematurely disappeared");
-		goto error;
-	}
-
-	/* Re-arm the kevent because we need more data. */
-	ucored_watch_socket(kq, cl->cl_fd, cl);
-	ucored_now(&cl->cl_lastseen);
-
-	return;
-error:
-	if (eof) {
-		/* Don't send anymore data! */
-		close(cl->cl_fd);
-		cl->cl_fd = -1;
-	}
-
-	ucored_client_close(cl, false);
-}
-
 static int
 ucored_loop(int kq)
 {
@@ -482,7 +364,8 @@ ucored_loop(int kq)
 
 			libucore_log(LOG_DEBUG, "Fetching data from client %d",
 			    fd);
-			ucored_fetch(kq, cl, evt->data, (evt->flags & EV_EOF) != 0);
+			ucored_client_fetch(cl, kq, evt->data,
+			    (evt->flags & EV_EOF) != 0);
 			/* Client may not be valid anymore. */
 			if (ucored_terminate)
 				goto out;
