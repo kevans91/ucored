@@ -8,6 +8,7 @@ SRCTOP=	${.CURDIR}/../..
 LIBUCORE=	${SRCTOP}/lib/libucore/libucore.a
 
 SRCS=	ucored.c \
+	ucored_client.c \
 	ucored_lua.c
 
 SHAREDIR?=	${PREFIX:U/usr/local}/share/ucored

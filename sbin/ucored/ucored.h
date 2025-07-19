@@ -38,6 +38,18 @@ struct ucored_client {
 	enum ucored_state			cl_state;
 };
 
+/* ucored.c */
+void ucored_now(struct timespec *);
+int ucored_watch_socket(int, int, struct ucored_client *);
+
+/* ucored_client.c */
+size_t ucored_client_lowat(struct ucored_client *);
+bool ucored_client_newseg(struct ucored_client *, struct ucore_data_hdr *);
+struct ucored_client *ucored_client_alloc(int, int);
+void ucored_client_done(struct ucored_client *);
+void ucored_client_close(struct ucored_client *, bool);
+void ucored_client_close_all(void);
+
 /* ucored_lua.c */
 bool ucored_lua_init(void);
 bool ucored_lua_handle(struct ucored_client *);
