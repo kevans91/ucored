@@ -142,7 +142,7 @@ local action_handlers = {
 	},
 	script = {
 		apply = function(action, ucore)
-			local ok =  action.handler(ucore)
+			local ok = action.handler(ucore)
 			core.notice(ucore:path() .. " handed over to " .. action.file)
 			return ok
 		end,
