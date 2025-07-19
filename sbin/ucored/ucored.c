@@ -298,7 +298,7 @@ ucored_now(struct timespec *tsp)
 }
 
 static void
-ucore_accept(int kq, int fd, int backlog)
+ucored_accept(int kq, int fd, int backlog)
 {
 	int clsock;
 
@@ -329,7 +329,7 @@ ucore_accept(int kq, int fd, int backlog)
 }
 
 static void
-ucore_fetch(int kq, struct ucored_client *cl, size_t avail, bool eof)
+ucored_fetch(int kq, struct ucored_client *cl, size_t avail, bool eof)
 {
 	struct ucore_data_hdr datahdr;
 	size_t wanted;
@@ -476,13 +476,13 @@ ucored_loop(int kq)
 			fd = evt->ident;
 			cl = evt->udata;
 			if (cl == NULL) {
-				ucore_accept(kq, fd, evt->data);
+				ucored_accept(kq, fd, evt->data);
 				continue;
 			}
 
 			libucore_log(LOG_DEBUG, "Fetching data from client %d",
 			    fd);
-			ucore_fetch(kq, cl, evt->data, (evt->flags & EV_EOF) != 0);
+			ucored_fetch(kq, cl, evt->data, (evt->flags & EV_EOF) != 0);
 			/* Client may not be valid anymore. */
 			if (ucored_terminate)
 				goto out;
