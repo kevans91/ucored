@@ -28,6 +28,11 @@
 
 #include "ucored.h"
 
+/* SOCK_CLOFORK wasn't introduced until 15.0. */
+#ifndef SOCK_CLOFORK
+#define SOCK_CLOFORK 0
+#endif
+
 static SLIST_HEAD(, ucored_client) all_clients =
     SLIST_HEAD_INITIALIZER(all_clients);
 
@@ -79,7 +84,7 @@ ucored_sock(void)
 	size_t ret;
 	int sock;
 
-	sock = socket(PF_UNIX, SOCK_STREAM, 0);
+	sock = socket(PF_UNIX, SOCK_STREAM | SOCK_CLOFORK, 0);
 	if (sock == -1) {
 		libucore_log(LOG_ERR, "socket: %m");
 		return (-1);
@@ -316,7 +321,7 @@ ucore_accept(int kq, int fd, int backlog)
 	 * shut them down.
 	 */
 	for (int i = 0; i < backlog; i++) {
-		clsock = accept(fd, NULL, NULL);
+		clsock = accept4(fd, NULL, NULL, SOCK_CLOFORK);
 		if (clsock == -1) {
 			libucore_log(LOG_ERR, "accept: %m");
 			return;
@@ -576,7 +581,7 @@ ucored_client_done(struct ucored_client *cl)
 	libucore_log(LOG_INFO, "Core details received [pid=%d, ppid=%d, signo=%d]",
 	    cl->cl_hdr.ucore_pid, cl->cl_hdr.ucore_ppid, cl->cl_hdr.ucore_signo);
 
-	/* XXX Check return... fork? */
+	/* XXX Check return... fork + close all FDs? */
 	ucored_lua_handle(cl);
 
 	ucored_client_close(cl, true);
