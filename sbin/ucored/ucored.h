@@ -27,17 +27,7 @@ struct ucored_client_data {
 	struct ucore_data		cl_data;
 };
 
-struct ucored_client {
-	struct ucore				cl_hdr;
-	SLIST_ENTRY(ucored_client)		cl_client;
-	SLIST_HEAD(,  ucored_client_data)	cl_datasegs;
-	struct ucored_client_data		*cl_curdataseg;
-	size_t					cl_ndatasegs;
-	size_t					cl_datasegs_recvd;
-	struct timespec				cl_lastseen;
-	int					cl_fd;
-	enum ucored_state			cl_state;
-};
+struct ucored_client;
 
 /* ucored.c */
 extern sig_atomic_t ucored_terminate;
@@ -46,8 +36,11 @@ void ucored_now(struct timespec *);
 int ucored_watch_socket(int, int, struct ucored_client *);
 
 /* ucored_client.c */
+const struct ucored_client_data *ucored_client_data(const struct ucored_client *,
+    enum ucore_data_type);
 void ucored_client_fetch(struct ucored_client *, int, size_t, bool);
 size_t ucored_client_lowat(struct ucored_client *);
+const struct ucore *ucored_client_header(const struct ucored_client *);
 bool ucored_client_newseg(struct ucored_client *, struct ucore_data_hdr *);
 struct ucored_client *ucored_client_alloc(int, int);
 void ucored_client_done(struct ucored_client *);

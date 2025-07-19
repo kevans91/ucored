@@ -14,8 +14,33 @@
 
 #include "ucored.h"
 
+struct ucored_client {
+	struct ucore				cl_hdr;
+	SLIST_ENTRY(ucored_client)		cl_client;
+	SLIST_HEAD(,  ucored_client_data)	cl_datasegs;
+	struct ucored_client_data		*cl_curdataseg;
+	size_t					cl_ndatasegs;
+	size_t					cl_datasegs_recvd;
+	struct timespec				cl_lastseen;
+	int					cl_fd;
+	enum ucored_state			cl_state;
+};
+
 static SLIST_HEAD(, ucored_client) all_clients =
     SLIST_HEAD_INITIALIZER(all_clients);
+
+const struct ucored_client_data *
+ucored_client_data(const struct ucored_client *cl, enum ucore_data_type type)
+{
+	struct ucored_client_data *sd;
+
+	SLIST_FOREACH(sd, &cl->cl_datasegs, cl_entry) {
+		if (sd->cl_data.ud_hdr.uhdr_type == type)
+			return (sd);
+	}
+
+	return (NULL);
+}
 
 void
 ucored_client_fetch(struct ucored_client *cl, int kq, size_t avail, bool eof)
@@ -133,6 +158,13 @@ error:
 	}
 
 	ucored_client_close(cl, false);
+}
+
+const struct ucore *
+ucored_client_header(const struct ucored_client *cl)
+{
+
+	return (&cl->cl_hdr);
 }
 
 size_t

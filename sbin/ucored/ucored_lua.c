@@ -289,14 +289,13 @@ static const luaL_Reg ucored_regex_meta[] = {
 static const uint8_t *
 ucored_ucore_strfetch_value(struct luaucore *self, enum ucore_data_type type)
 {
-	struct ucored_client_data *sd;
+	const struct ucored_client_data *sd;
 
-	SLIST_FOREACH(sd, &self->cl->cl_datasegs, cl_entry) {
-		if (sd->cl_data.ud_hdr.uhdr_type == type)
-			return (&sd->cl_data.ud_data[0]);
-	}
+	sd = ucored_client_data(self->cl, type);
+	if (sd == NULL)
+		return (NULL);
 
-	return (NULL);
+	return (&sd->cl_data.ud_data[0]);
 }
 
 static int
@@ -617,7 +616,7 @@ static void
 ucored_lua_push_ucore(struct ucored_client *cl)
 {
 	struct luaucore *lucore;
-	struct ucore *ucore;
+	const struct ucore *ucore;
 
 	/* Setup our ucore arg. */
 	lucore = lua_newuserdatauv(ucored_state, sizeof(*lucore), UCV_NVALS - 1);
@@ -625,7 +624,7 @@ ucored_lua_push_ucore(struct ucored_client *cl)
 	lucore->cl = cl;
 
 	/* UCV_ATTRS */
-	ucore = &cl->cl_hdr;
+	ucore = ucored_client_header(cl);
 	lua_newtable(ucored_state);
 	lua_pushinteger(ucored_state, ucore->ucore_signo);
 	lua_setfield(ucored_state, -2, "signal");
