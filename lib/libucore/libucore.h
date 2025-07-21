@@ -26,7 +26,6 @@ typedef const struct ucore *
 typedef int ucore_open_core_fn(const struct ucore_provider *);
 
 struct ucore_provider {
-	void			*p_ctx;
 	ucore_fetch_data_fn	*p_fetch_data;
 	ucore_fetch_header_fn	*p_fetch_header;
 	ucore_open_core_fn	*p_open_core;

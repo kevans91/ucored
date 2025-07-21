@@ -20,6 +20,7 @@ static size_t ucored_client_lowat(struct ucore_readable *ur);
 
 struct ucored_client {
 	struct ucore_readable			cl_readable;
+	struct ucore_provider			cl_provider;
 	struct ucore				cl_hdr;
 	SLIST_ENTRY(ucored_client)		cl_client;
 	SLIST_HEAD(,  ucored_client_data)	cl_datasegs;
@@ -31,8 +32,10 @@ struct ucored_client {
 };
 
 #define	cl_fd	cl_readable.r_fd
-#define	UCORED_CLIENT_OF(ur)	\
+#define	UCORED_CLIENT_FROM_READABLE(ur)	\
     __containerof(ur, struct ucored_client, cl_readable)
+#define	UCORED_CLIENT_FROM_PROVIDER(ur)	\
+    __containerof(ur, struct ucored_client, cl_provider)
 
 static SLIST_HEAD(, ucored_client) all_clients =
     SLIST_HEAD_INITIALIZER(all_clients);
@@ -40,7 +43,7 @@ static SLIST_HEAD(, ucored_client) all_clients =
 static const struct ucore_data *
 ucored_client_data(const struct ucore_provider *up, enum ucore_data_type type)
 {
-	const struct ucored_client *cl = up->p_ctx;
+	const struct ucored_client *cl = UCORED_CLIENT_FROM_PROVIDER(up);
 	struct ucored_client_data *sd;
 
 	SLIST_FOREACH(sd, &cl->cl_datasegs, cl_entry) {
@@ -54,7 +57,7 @@ ucored_client_data(const struct ucore_provider *up, enum ucore_data_type type)
 static bool
 ucored_client_fetch(struct ucore_readable *ur, size_t avail, bool eof)
 {
-	struct ucored_client *cl = UCORED_CLIENT_OF(ur);
+	struct ucored_client *cl = UCORED_CLIENT_FROM_READABLE(ur);
 	struct ucore_data_hdr datahdr;
 	size_t wanted;
 
@@ -180,7 +183,7 @@ error:
 static const struct ucore *
 ucored_client_header(const struct ucore_provider *up)
 {
-	const struct ucored_client *cl = up->p_ctx;
+	const struct ucored_client *cl = UCORED_CLIENT_FROM_PROVIDER(up);
 
 	return (&cl->cl_hdr);
 }
@@ -188,7 +191,7 @@ ucored_client_header(const struct ucore_provider *up)
 static size_t
 ucored_client_lowat(struct ucore_readable *ur)
 {
-	struct ucored_client *cl = UCORED_CLIENT_OF(ur);
+	struct ucored_client *cl = UCORED_CLIENT_FROM_READABLE(ur);
 
 	switch (cl->cl_state) {
 	case STATE_HDR:
@@ -286,22 +289,15 @@ ucored_client_init_readable(struct ucored_client *cl, int clsock)
 	ur->r_oneshot = true;
 }
 
-static struct ucore_provider *
-ucored_client_provider(struct ucored_client *cl)
+static void
+ucored_client_init_provider(struct ucored_client *cl)
 {
 	struct ucore_provider *up;
 
-	up = malloc(sizeof(*up));
-	if (up == NULL) {
-		libucore_log(LOG_ERR, "malloc: %m");
-		return (NULL);
-	}
-
-	up->p_ctx = cl;
+	up = &cl->cl_provider;
 	up->p_fetch_data = ucored_client_data;
 	up->p_fetch_header = ucored_client_header;
 	up->p_open_core = ucored_client_open_core;
-	return (up);
 }
 
 struct ucored_client *
@@ -330,6 +326,7 @@ ucored_client_alloc(int kq, int clsock)
 	}
 
 	ucored_client_init_readable(cl, clsock);
+	ucored_client_init_provider(cl);
 
 	SLIST_INSERT_HEAD(&all_clients, cl, cl_client);
 	SLIST_INIT(&cl->cl_datasegs);
@@ -342,8 +339,6 @@ ucored_client_alloc(int kq, int clsock)
 void
 ucored_client_done(struct ucored_client *cl)
 {
-	struct ucore_provider *up;
-
 	assert(cl->cl_state == STATE_DONE);
 
 	shutdown(cl->cl_fd, SHUT_RD);
@@ -352,12 +347,7 @@ ucored_client_done(struct ucored_client *cl)
 	libucore_log(LOG_INFO, "Core details received [pid=%d, ppid=%d, signo=%d]",
 	    cl->cl_hdr.ucore_pid, cl->cl_hdr.ucore_ppid, cl->cl_hdr.ucore_signo);
 
-	up = ucored_client_provider(cl);
-	if (up != NULL) {
-		/* XXX Check return... fork + close all FDs? */
-		ucored_lua_handle(up);
-		free(up);
-	}
+	ucored_lua_handle(&cl->cl_provider);
 
 	ucored_client_close(cl, true);
 }
