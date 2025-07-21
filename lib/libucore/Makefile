@@ -1,6 +1,7 @@
 
 LIB=	ucore
-SRCS=	libucore.c
+SRCS=	libucore.c \
+	libucore_dev.c
 WARNS=	6
 
 SRCTOP=	${.CURDIR}/../..

@@ -13,6 +13,7 @@
 
 #define	PATH_UCORED_SOCK	"/var/run/ucored.sock"
 
+struct ucore_dev;
 struct ucore_provider;
 struct ucore_readable;
 
@@ -46,8 +47,15 @@ struct ucore_readable {
 	bool			 r_oneshot;
 };
 
+typedef bool ucore_handle_fn(struct ucore_provider *);
+
 bool libucore_send_data(int fd, const void *payload, size_t payloadsz);
 bool libucore_read_data(int fd, void *payload, size_t payloadsz);
+
+bool libucore_dev_available(void);
+struct ucore_dev *libucore_dev_open(ucore_handle_fn *);
+struct ucore_readable *libucore_dev_readable(struct ucore_dev *);
+void libucore_dev_close(struct ucore_dev *);
 
 void libucore_set_debug(bool dbg);
 void libucore_set_verbose(int verbose);
