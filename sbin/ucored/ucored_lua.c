@@ -32,7 +32,7 @@
 
 /* Just a light wrapper for our ucore. */
 struct luaucore {
-	struct ucored_client	*cl;
+	struct ucore_provider	*up;
 };
 
 enum ucore_uvalues {
@@ -291,13 +291,13 @@ static const luaL_Reg ucored_regex_meta[] = {
 static const uint8_t *
 ucored_ucore_strfetch_value(struct luaucore *self, enum ucore_data_type type)
 {
-	const struct ucored_client_data *sd;
+	const struct ucore_data *sd;
 
-	sd = ucored_client_data(self->cl, type);
+	sd = (*self->up->p_fetch_data)(self->up, type);
 	if (sd == NULL)
 		return (NULL);
 
-	return (&sd->cl_data.ud_data[0]);
+	return (&sd->ud_data[0]);
 }
 
 static int
@@ -747,7 +747,7 @@ ucored_lua_init(void)
 }
 
 static void
-ucored_lua_push_ucore(struct ucored_client *cl)
+ucored_lua_push_ucore(struct ucore_provider *up)
 {
 	struct luaucore *lucore;
 	const struct ucore *ucore;
@@ -755,10 +755,10 @@ ucored_lua_push_ucore(struct ucored_client *cl)
 	/* Setup our ucore arg. */
 	lucore = lua_newuserdatauv(ucored_state, sizeof(*lucore), UCV_NVALS - 1);
 	luaL_setmetatable(ucored_state, UCORED_UCOREHANDLE);
-	lucore->cl = cl;
+	lucore->up = up;
 
 	/* UCV_ATTRS */
-	ucore = ucored_client_header(cl);
+	ucore = (*up->p_fetch_header)(up);
 	lua_newtable(ucored_state);
 	lua_pushinteger(ucored_state, ucore->ucore_signo);
 	lua_setfield(ucored_state, -2, "signal");
@@ -773,14 +773,14 @@ ucored_lua_push_ucore(struct ucored_client *cl)
 }
 
 bool
-ucored_lua_handle(struct ucored_client *cl)
+ucored_lua_handle(struct ucore_provider *up)
 {
 	bool ok;
 
 	/* Copy the handler that ucored.lua left on the stack. */
 	lua_pushvalue(ucored_state, -1);
 
-	ucored_lua_push_ucore(cl);
+	ucored_lua_push_ucore(up);
 	if (lua_pcall(ucored_state, 1, 1, 0)) {
 		const char *err;
 

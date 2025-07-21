@@ -7,6 +7,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <assert.h>
+#include <fcntl.h>
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
@@ -29,14 +30,15 @@ struct ucored_client {
 static SLIST_HEAD(, ucored_client) all_clients =
     SLIST_HEAD_INITIALIZER(all_clients);
 
-const struct ucored_client_data *
-ucored_client_data(const struct ucored_client *cl, enum ucore_data_type type)
+static const struct ucore_data *
+ucored_client_data(const struct ucore_provider *up, enum ucore_data_type type)
 {
+	const struct ucored_client *cl = up->p_ctx;
 	struct ucored_client_data *sd;
 
 	SLIST_FOREACH(sd, &cl->cl_datasegs, cl_entry) {
 		if (sd->cl_data.ud_hdr.uhdr_type == type)
-			return (sd);
+			return (&sd->cl_data);
 	}
 
 	return (NULL);
@@ -160,9 +162,10 @@ error:
 	ucored_client_close(cl, false);
 }
 
-const struct ucore *
-ucored_client_header(const struct ucored_client *cl)
+static const struct ucore *
+ucored_client_header(const struct ucore_provider *up)
 {
+	const struct ucored_client *cl = up->p_ctx;
 
 	return (&cl->cl_hdr);
 }
@@ -232,6 +235,23 @@ ucored_client_send_ack(struct ucored_client *cl, int status)
 		libucore_log(LOG_ERR, "Failed to ack with status=%d", status);
 }
 
+static struct ucore_provider *
+ucored_client_provider(struct ucored_client *cl)
+{
+	struct ucore_provider *up;
+
+	up = malloc(sizeof(*up));
+	if (up == NULL) {
+		libucore_log(LOG_ERR, "malloc: %m");
+		return (NULL);
+	}
+
+	up->p_ctx = cl;
+	up->p_fetch_data = ucored_client_data;
+	up->p_fetch_header = ucored_client_header;
+	return (up);
+}
+
 struct ucored_client *
 ucored_client_alloc(int kq, int clsock)
 {
@@ -269,6 +289,7 @@ ucored_client_alloc(int kq, int clsock)
 void
 ucored_client_done(struct ucored_client *cl)
 {
+	struct ucore_provider *up;
 
 	assert(cl->cl_state == STATE_DONE);
 
@@ -278,8 +299,12 @@ ucored_client_done(struct ucored_client *cl)
 	libucore_log(LOG_INFO, "Core details received [pid=%d, ppid=%d, signo=%d]",
 	    cl->cl_hdr.ucore_pid, cl->cl_hdr.ucore_ppid, cl->cl_hdr.ucore_signo);
 
-	/* XXX Check return... fork + close all FDs? */
-	ucored_lua_handle(cl);
+	up = ucored_client_provider(cl);
+	if (up != NULL) {
+		/* XXX Check return... fork + close all FDs? */
+		ucored_lua_handle(up);
+		free(up);
+	}
 
 	ucored_client_close(cl, true);
 }
