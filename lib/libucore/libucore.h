@@ -14,6 +14,7 @@
 #define	PATH_UCORED_SOCK	"/var/run/ucored.sock"
 
 struct ucore_provider;
+struct ucore_readable;
 
 /* Fetches data described by the type, if available.  Returns NULL otherwise. */
 typedef const struct ucore_data *
@@ -29,6 +30,21 @@ struct ucore_provider {
 	ucore_fetch_data_fn	*p_fetch_data;
 	ucore_fetch_header_fn	*p_fetch_header;
 	ucore_open_core_fn	*p_open_core;
+};
+
+/*
+ * Returns true if we should continue watching this fd, false if it we should
+ * drop it.
+ */
+typedef bool ucore_read_fn(struct ucore_readable *, size_t, bool);
+/* Returns the low-watermark requested for this socket (optional) */
+typedef size_t ucore_lowat_fn(struct ucore_readable *);
+
+struct ucore_readable {
+	ucore_lowat_fn		*r_lowat;
+	ucore_read_fn		*r_read;
+	int			 r_fd;
+	bool			 r_oneshot;
 };
 
 bool libucore_send_data(int fd, const void *payload, size_t payloadsz);

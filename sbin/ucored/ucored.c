@@ -37,7 +37,16 @@
 /* sysctl to enable devctl notifications upon coredump. */
 #define	DEVCTL_SYSCTL	"kern.coredump_devctl"
 
+struct ucored_server {
+	struct ucore_readable	serv_readable;
+	int			serv_kq;
+};
+
+#define	UCORED_SERVER_OF(ur)	\
+    __containerof(ur, struct ucored_server, serv_readable)
+
 static int ucored_loop(int);
+static bool ucored_accept(struct ucore_readable *, size_t, bool);
 
 sig_atomic_t ucored_terminate;
 
@@ -103,20 +112,24 @@ ucored_sock(void)
 }
 
 int
-ucored_watch_socket(int kq, int sock, struct ucored_client *cl)
+ucored_watch_socket(int kq, struct ucore_readable *ur)
 {
 	struct kevent ev;
+	int fd = ur->r_fd;
 
-	if (cl == NULL) {
+	/*
+	 * The continuous monitoring case is likely the listeing socket, since
+	 * we don't really have a need to do that.  Clients will generally do
+	 * one-shot for each segment of data they expect to receive.
+	 */
+	if (!ur->r_oneshot) {
 		/* Listening socket */
-		EV_SET(&ev, sock, EVFILT_READ, EV_ADD, 0, 0, NULL);
+		EV_SET(&ev, fd, EVFILT_READ, EV_ADD, 0, 0, ur);
+	} else if (ur->r_lowat != NULL) {
+		EV_SET(&ev, fd, EVFILT_READ, EV_ADD | EV_ONESHOT,
+		    NOTE_LOWAT, (*ur->r_lowat)(ur), ur);
 	} else {
-		/*
-		 * Clients do one-shot for each segment of data they expect
-		 * to receive.
-		 */
-		EV_SET(&ev, sock, EVFILT_READ, EV_ADD | EV_ONESHOT,
-		    NOTE_LOWAT, ucored_client_lowat(cl), cl);
+		EV_SET(&ev, fd, EVFILT_READ, EV_ADD | EV_ONESHOT, 0, 0, ur);
 	}
 
 	if (kevent(kq, &ev, 1, NULL, 0, NULL) == -1) {
@@ -174,6 +187,7 @@ main(int argc, char *argv[])
 {
 	const char *pidfile = NULL;
 	struct pidfh *pidfh = NULL;
+	struct ucored_server *userv = NULL;
 	int ch, error = 1, devctl_prev, kq = -1, sock = -1, verbose = 0;
 	bool debug = false, socket_initiated;
 
@@ -238,6 +252,8 @@ main(int argc, char *argv[])
 	}
 
 	if (!socket_initiated) {
+		struct ucore_readable *ur;
+
 		sock = ucored_sock();
 		if (sock == -1)
 			goto done_nosock;
@@ -247,7 +263,19 @@ main(int argc, char *argv[])
 			goto done;
 		}
 
-		if (ucored_watch_socket(kq, sock, 0) == -1)
+		userv = calloc(1, sizeof(*userv));
+		if (userv == NULL) {
+			libucore_log(LOG_ERR, "calloc: %m");
+			goto done;
+		}
+
+		userv->serv_kq = kq;
+
+		ur = &userv->serv_readable;
+		ur->r_read = ucored_accept;
+		ur->r_fd = sock;
+
+		if (ucored_watch_socket(kq, ur) == -1)
 			goto done;
 	} else if (ucored_client_alloc(kq, sock) == NULL) {
 		goto done;
@@ -285,6 +313,7 @@ done_nosock:
 
 	if (kq >= 0)
 		close(kq);
+	free(userv);
 	if (sock >= 0)
 		close(sock);
 	return (error);
@@ -296,10 +325,12 @@ ucored_now(struct timespec *tsp)
 	(void)clock_gettime(CLOCK_UPTIME, tsp);
 }
 
-static void
-ucored_accept(int kq, int fd, int backlog)
+static bool
+ucored_accept(struct ucore_readable *ur, size_t backlog, bool eof __unused)
 {
+	struct ucored_server *userv = UCORED_SERVER_OF(ur);
 	int clsock;
+	int fd = ur->r_fd, kq = userv->serv_kq;
 
 	/*
 	 * All errors here are considered non-fatal.  We'll return and move on
@@ -308,11 +339,11 @@ ucored_accept(int kq, int fd, int backlog)
 	 * we have are new connections and we'll keep returning here just to
 	 * shut them down.
 	 */
-	for (int i = 0; i < backlog; i++) {
+	for (size_t i = 0; i < backlog; i++) {
 		clsock = accept4(fd, NULL, NULL, SOCK_CLOFORK);
 		if (clsock == -1) {
 			libucore_log(LOG_ERR, "accept: %m");
-			return;
+			return (true);
 		}
 
 		/*
@@ -323,8 +354,10 @@ ucored_accept(int kq, int fd, int backlog)
 		 * because each instance services just a single client.
 		 */
 		if (ucored_client_alloc(kq, clsock) == NULL)
-			return;
+			return (true);
 	}
+
+	return (true);
 }
 
 static int
@@ -351,23 +384,46 @@ ucored_loop(int kq)
 
 		for (int idx = 0; idx < ret; idx++) {
 			const struct kevent *evt = &kev[idx];
-			struct ucored_client *cl;
+			struct ucore_readable *ur;
 			int fd;
+			bool rearm, oneshot;
 
 			fd = evt->ident;
-			cl = evt->udata;
-			if (cl == NULL) {
-				ucored_accept(kq, fd, evt->data);
+			ur = evt->udata;
+
+			/* XXX If we add a timer, we'll probably trip this. */
+			assert(ur != NULL);
+
+			libucore_log(LOG_DEBUG, "Fetching data from fd %d",
+			    fd);
+
+			oneshot = ur->r_oneshot;
+			rearm = (*ur->r_read)(ur, evt->data,
+			    (evt->flags & EV_EOF) != 0);
+
+			/*
+			 * Client may not be valid anymore, unless we were
+			 * asked to re-arm.  If we were asked to terminate, just
+			 * bail out anyways.
+			 */
+			if (ucored_terminate)
+				goto out;
+
+			/*
+			 * The readable needs to coordinate its own removal if
+			 * it wants to go away; we don't manage the lifetime of
+			 * ucore_readable objects here.  We stashed r_oneshot
+			 * away just in case the object was freed during the
+			 * r_read() callback, but if it requested re-arm then
+			 * the readable should still be alive.
+			 */
+			if (!oneshot) {
+				assert(rearm);
 				continue;
 			}
 
-			libucore_log(LOG_DEBUG, "Fetching data from client %d",
-			    fd);
-			ucored_client_fetch(cl, kq, evt->data,
-			    (evt->flags & EV_EOF) != 0);
-			/* Client may not be valid anymore. */
-			if (ucored_terminate)
-				goto out;
+			if (rearm)
+				ucored_watch_socket(kq, ur);
 		}
 	}
 

@@ -16,7 +16,10 @@
 
 #include "ucored.h"
 
+static size_t ucored_client_lowat(struct ucore_readable *ur);
+
 struct ucored_client {
+	struct ucore_readable			cl_readable;
 	struct ucore				cl_hdr;
 	SLIST_ENTRY(ucored_client)		cl_client;
 	SLIST_HEAD(,  ucored_client_data)	cl_datasegs;
@@ -24,9 +27,12 @@ struct ucored_client {
 	size_t					cl_ndatasegs;
 	size_t					cl_datasegs_recvd;
 	struct timespec				cl_lastseen;
-	int					cl_fd;
 	enum ucored_state			cl_state;
 };
+
+#define	cl_fd	cl_readable.r_fd
+#define	UCORED_CLIENT_OF(ur)	\
+    __containerof(ur, struct ucored_client, cl_readable)
 
 static SLIST_HEAD(, ucored_client) all_clients =
     SLIST_HEAD_INITIALIZER(all_clients);
@@ -45,22 +51,24 @@ ucored_client_data(const struct ucore_provider *up, enum ucore_data_type type)
 	return (NULL);
 }
 
-void
-ucored_client_fetch(struct ucored_client *cl, int kq, size_t avail, bool eof)
+static bool
+ucored_client_fetch(struct ucore_readable *ur, size_t avail, bool eof)
 {
+	struct ucored_client *cl = UCORED_CLIENT_OF(ur);
 	struct ucore_data_hdr datahdr;
 	size_t wanted;
 
-	while (avail >= (wanted = ucored_client_lowat(cl))) {
+	while (avail >= (wanted = ucored_client_lowat(ur))) {
 		void *buf;
 		size_t bufsz;
 
 		/*
-		 * When we're signaled to terminate, just break out immediately.
+		 * When we're signaled to terminate, just break out immediately
+		 * and don't ask the caller to reschedule us.
 		 */
 		atomic_signal_fence(memory_order_acquire);
 		if (ucored_terminate)
-			return;
+			return (false);
 
 		assert(cl->cl_state != STATE_DONE);
 		switch (cl->cl_state) {
@@ -129,7 +137,12 @@ ucored_client_fetch(struct ucored_client *cl, int kq, size_t avail, bool eof)
 				if (cl->cl_datasegs_recvd == cl->cl_ndatasegs) {
 					cl->cl_state = STATE_DONE;
 					ucored_client_done(cl);
-					return;
+
+					/*
+					 * We have all of our data, the caller
+					 * can drop it; we've cleaned up.
+					 */
+					return (false);
 				}
 			}
 
@@ -148,11 +161,10 @@ ucored_client_fetch(struct ucored_client *cl, int kq, size_t avail, bool eof)
 		goto error;
 	}
 
-	/* Re-arm the kevent because we need more data. */
-	ucored_watch_socket(kq, cl->cl_fd, cl);
 	ucored_now(&cl->cl_lastseen);
 
-	return;
+	/* Re-arm the kevent because we need more data. */
+	return (true);
 error:
 	if (eof) {
 		/* Don't send anymore data! */
@@ -160,7 +172,9 @@ error:
 		cl->cl_fd = -1;
 	}
 
+	/* Client's invalid, drop it -- the caller must drop it as well. */
 	ucored_client_close(cl, false);
+	return (false);
 }
 
 static const struct ucore *
@@ -171,9 +185,10 @@ ucored_client_header(const struct ucore_provider *up)
 	return (&cl->cl_hdr);
 }
 
-size_t
-ucored_client_lowat(struct ucored_client *cl)
+static size_t
+ucored_client_lowat(struct ucore_readable *ur)
 {
+	struct ucored_client *cl = UCORED_CLIENT_OF(ur);
 
 	switch (cl->cl_state) {
 	case STATE_HDR:
@@ -259,6 +274,18 @@ ucored_client_open_core(const struct ucore_provider *up)
 	return (fd);
 }
 
+static void
+ucored_client_init_readable(struct ucored_client *cl, int clsock)
+{
+	struct ucore_readable *ur;
+
+	ur = &cl->cl_readable;
+	ur->r_lowat = ucored_client_lowat;
+	ur->r_read = ucored_client_fetch;
+	ur->r_fd = clsock;
+	ur->r_oneshot = true;
+}
+
 static struct ucore_provider *
 ucored_client_provider(struct ucored_client *cl)
 {
@@ -302,12 +329,13 @@ ucored_client_alloc(int kq, int clsock)
 		return (NULL);
 	}
 
+	ucored_client_init_readable(cl, clsock);
+
 	SLIST_INSERT_HEAD(&all_clients, cl, cl_client);
 	SLIST_INIT(&cl->cl_datasegs);
-	cl->cl_fd = clsock;
 	ucored_now(&cl->cl_lastseen);
 
-	ucored_watch_socket(kq, clsock, cl);
+	ucored_watch_socket(kq, &cl->cl_readable);
 	return (cl);
 }
 
