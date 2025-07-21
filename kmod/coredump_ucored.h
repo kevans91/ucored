@@ -6,7 +6,7 @@
 
 #pragma once
 
-#include <sys/_types.h>
+#include <sys/types.h>
 
 #define	UCORE_MAGIC	"UCORE0"
 
