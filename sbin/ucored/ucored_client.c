@@ -340,11 +340,11 @@ ucored_client_close(struct ucored_client *cl, bool acked)
 	struct ucored_client_data *cld;
 
 	if (cl->cl_fd >= 0) {
-			if (!acked)
-				ucored_client_send_ack(cl, 1);
+		if (!acked)
+			ucored_client_send_ack(cl, 1);
 
-			close(cl->cl_fd);
-			cl->cl_fd = -1;
+		close(cl->cl_fd);
+		cl->cl_fd = -1;
 	}
 
 	while ((cld = SLIST_FIRST(&cl->cl_datasegs)) != NULL) {
