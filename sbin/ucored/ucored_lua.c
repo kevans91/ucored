@@ -384,6 +384,7 @@ ucored_ucore_filename(lua_State *L)
 
 	self = luaL_checkudata(L, 1, UCORED_UCOREHANDLE);
 	corefile = (const char *)ucored_ucore_strfetch_value(self, UDT_PATH);
+	assert(corefile != NULL);	/* XXX */
 
 	delim = strrchr(corefile, '/');
 	if (delim != NULL)
@@ -409,6 +410,7 @@ ucored_ucore_move(lua_State *L)
 	fromfd = tofd = -1;
 	self = luaL_checkudata(L, 1, UCORED_UCOREHANDLE);
 	corepath = (const char *)ucored_ucore_strfetch_value(self, UDT_PATH);
+	assert(corepath != NULL);	/* XXX */
 	path = luaL_checkstring(L, 2);
 
 	/*
@@ -433,7 +435,7 @@ ucored_ucore_move(lua_State *L)
 	 * for rename(2), we'll set it up for copy_file_range(2) + unlink(2)
 	 * instead.
 	 */
-	fromfd = open(corepath, O_RDONLY | O_NOFOLLOW);
+	fromfd = (*self->up->p_open_core)(self->up);
 	if (fromfd == -1) {
 		/*
 		 * Symlinks are all kinds of security issues, so we'll always
@@ -595,6 +597,7 @@ ucored_ucore_pipe(lua_State *L)
 
 	self = luaL_checkudata(L, 1, UCORED_UCOREHANDLE);
 	corepath = (const char *)ucored_ucore_strfetch_value(self, UDT_PATH);
+	assert(corepath != NULL);	/* XXX */
 
 	argc = lua_gettop(L) - 1;
 	if (argc == 0) {
@@ -603,12 +606,17 @@ ucored_ucore_pipe(lua_State *L)
 		return (2);
 	}
 
-	corefd = open(corepath, O_RDONLY);
+	corefd = (*self->up->p_open_core)(self->up);
 	if (corefd == -1) {
 		int serrno = errno;
 
 		luaL_pushfail(L);
-		lua_pushfstring(L, "%s: open: %s", corepath, strerror(serrno));
+		if (corepath != NULL) {
+			lua_pushfstring(L, "%s: open: %s", corepath, strerror(serrno));
+		} else {
+			lua_pushfstring(L, "failed to open core: %s",
+			    strerror(serrno));
+		}
 		return (2);
 	}
 

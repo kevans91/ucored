@@ -19,11 +19,13 @@ typedef const struct ucore_data *
     ucore_fetch_data_fn(const struct ucore_provider *, enum ucore_data_type);
 typedef const struct ucore *
     ucore_fetch_header_fn(const struct ucore_provider *);
+typedef int ucore_open_core_fn(const struct ucore_provider *);
 
 struct ucore_provider {
 	void			*p_ctx;
 	ucore_fetch_data_fn	*p_fetch_data;
 	ucore_fetch_header_fn	*p_fetch_header;
+	ucore_open_core_fn	*p_open_core;
 };
 
 bool libucore_send_data(int fd, const void *payload, size_t payloadsz);

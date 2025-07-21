@@ -7,6 +7,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <assert.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <stdatomic.h>
 #include <stdlib.h>
@@ -235,6 +236,29 @@ ucored_client_send_ack(struct ucored_client *cl, int status)
 		libucore_log(LOG_ERR, "Failed to ack with status=%d", status);
 }
 
+static int
+ucored_client_open_core(const struct ucore_provider *up)
+{
+	const struct ucore_data *sd;
+	const char *corepath;
+	int fd;
+
+	sd = ucored_client_data(up, UDT_PATH);
+	if (sd == NULL) {
+		libucore_log(LOG_ERR, "Failed to open core; no path provided");
+		errno = ENOENT;
+		return (-1);
+	}
+
+	corepath = &sd->ud_data[0];
+
+	fd = open(corepath, O_RDONLY | O_NOFOLLOW);
+	if (fd == -1)
+		return (-1);
+
+	return (fd);
+}
+
 static struct ucore_provider *
 ucored_client_provider(struct ucored_client *cl)
 {
@@ -249,6 +273,7 @@ ucored_client_provider(struct ucored_client *cl)
 	up->p_ctx = cl;
 	up->p_fetch_data = ucored_client_data;
 	up->p_fetch_header = ucored_client_header;
+	up->p_open_core = ucored_client_open_core;
 	return (up);
 }
 
