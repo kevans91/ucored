@@ -8,10 +8,12 @@
 #include <sys/conf.h>
 #include <sys/event.h>
 #include <sys/exec.h>
+#include <sys/filio.h>
 #include <sys/imgact.h>
 #include <sys/fcntl.h>
 #include <sys/jail.h>
 #include <sys/kernel.h>
+#include <sys/limits.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
 #include <sys/mman.h>
@@ -166,10 +168,31 @@ ucoredev_read(struct cdev *dev __unused, struct uio *uio, int flags __unused)
 	return (error);
 }
 
-static int
-ucoredev_ioctl(struct cdev *dev __unused, u_long cmd __unused,
-    caddr_t data __unused, int flags __unused, struct thread *td __unused)
+/*
+ * Clamp the # cores available to the type that we need to eventually squeeze
+ * this into; the result is expected to be multiplied by sizeof(int).
+ */
+static size_t
+ucoredev_cores_available(uintmax_t type_max)
 {
+	UCORE_LOCK_ASSERT();
+	return (MIN(type_max / sizeof(int), ucoresz));
+}
+
+static int
+ucoredev_ioctl(struct cdev *dev __unused, u_long cmd, caddr_t data,
+    int flags __unused, struct thread *td __unused)
+{
+
+	switch (cmd) {
+	case FIONREAD:
+		UCORE_LOCK();
+		*(int *)data = ucoredev_cores_available(INT_MAX) * sizeof(int);
+		UCORE_UNLOCK();
+
+		return (0);
+	}
+
 	return (ENOIOCTL);
 }
 
@@ -217,11 +240,8 @@ ucoredev_kqfilter(struct cdev *dev, struct knote *kn)
 static int
 ucoredev_kqread(struct knote *kn, long hint)
 {
-	size_t ncores = MIN(INT64_MAX / sizeof(int), ucoresz);
-
 	UCORE_LOCK_ASSERT();
-	kn->kn_data = ncores * sizeof(int);
-
+	kn->kn_data = ucoredev_cores_available(INT64_MAX) * sizeof(int);
 	return (kn->kn_data != 0);
 }
 
