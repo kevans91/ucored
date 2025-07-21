@@ -8,6 +8,7 @@ SRCTOP=	${.CURDIR}/../..
 LIBUCORE=	${SRCTOP}/lib/libucore/libucore.a
 
 CFLAGS+=	-I${SRCTOP}/lib/libucore
+CFLAGS+=	-I${SRCTOP}/kmod
 LDADD+=	-ljail ${LIBUCORE}
 DPADD+=	-ljail ${LIBUCORE}
 

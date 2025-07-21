@@ -29,6 +29,8 @@
 #include <sys/unistd.h>
 #include <sys/queue.h>
 
+#include "coredump_ucored.h"
+
 static d_open_t ucoredev_open;
 static d_read_t ucoredev_read;
 static d_ioctl_t ucoredev_ioctl;

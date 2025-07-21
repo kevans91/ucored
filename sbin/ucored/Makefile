@@ -23,6 +23,7 @@ LUALIB?=	-L/usr/local/lib -llua-5.4
 CFLAGS+=	-DUCORED -I${LUAINC} -I${SRCTOP}/lib/libucore
 CFLAGS+=	-DUCORED_LUAFILE="\"${SHAREDIR}/ucored.lua\""
 CFLAGS+=	-DUCORED_LUAPATH="\"${SHAREDIR}/?.lua;;\""
+CFLAGS+=	-I${SRCTOP}/kmod
 
 LDADD+=	-lutil ${LUALIB} ${LIBUCORE}
 DPADD+=	-lutil ${LUALIB} ${LIBUCORE}
