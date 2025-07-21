@@ -15,10 +15,13 @@
 
 struct ucore_provider;
 
+/* Fetches data described by the type, if available.  Returns NULL otherwise. */
 typedef const struct ucore_data *
     ucore_fetch_data_fn(const struct ucore_provider *, enum ucore_data_type);
+/* Fetches the ucore header belonging to this provider.  Cannot fail. */
 typedef const struct ucore *
     ucore_fetch_header_fn(const struct ucore_provider *);
+/* Returns an fd for the core belonging to this provider, or -1 on error. */
 typedef int ucore_open_core_fn(const struct ucore_provider *);
 
 struct ucore_provider {
