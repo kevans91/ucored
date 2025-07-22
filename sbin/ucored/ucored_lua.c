@@ -4,7 +4,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <sys/types.h>
+#include <sys/param.h>
+#include <sys/conf.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <err.h>
@@ -349,8 +350,10 @@ static bool
 ucored_copy_file(int fromfd, int tofd, off_t fsize)
 {
 	off_t copied = 0;
-	off_t fromoff = 0, tooff = 0;
+	off_t fromoff, tooff = 0;
 
+	/* We must assume the caller wants us to copy from the current position. */
+	fromoff = lseek(fromfd, 0, SEEK_CUR);
 	while (copied < fsize) {
 		ssize_t ret;
 
@@ -400,6 +403,8 @@ ucored_ucore_move(lua_State *L)
 	struct stat sb;
 	struct timespec ts[2];
 	struct luaucore *self;
+	const struct ucore *hdr;
+	struct ucore_provider *up;
 	const char *corepath, *path;
 	off_t coresize;
 	int fromfd, serrno, tofd;
@@ -412,6 +417,9 @@ ucored_ucore_move(lua_State *L)
 	corepath = (const char *)ucored_ucore_strfetch_value(self, UDT_PATH);
 	assert(corepath != NULL);	/* XXX */
 	path = luaL_checkstring(L, 2);
+
+	up = self->up;
+	hdr = (*up->p_fetch_header)(up);
 
 	/*
 	 * We will only attempt a rename if the destination just does not exist.
@@ -435,7 +443,7 @@ ucored_ucore_move(lua_State *L)
 	 * for rename(2), we'll set it up for copy_file_range(2) + unlink(2)
 	 * instead.
 	 */
-	fromfd = (*self->up->p_open_core)(self->up);
+	fromfd = (*up->p_open_core)(up);
 	if (fromfd == -1) {
 		/*
 		 * Symlinks are all kinds of security issues, so we'll always
@@ -455,17 +463,28 @@ ucored_ucore_move(lua_State *L)
 		goto err;
 	}
 
-	if (fstat(fromfd, &sb) == -1)
-		goto err;
+	fflags = hdr->ucore_fflags & UCORED_FFLAGS_PRESERVED;
+	if (hdr->ucore_tainted) {
+		/*
+		 * For tainted processes, we'll allow the dump if system policy
+		 * has it enabled, but we draw a hard line at letting an
+		 * unprivileged process access it.  For normal privilege
+		 * dropping that seems fine, it's going to be some other user
+		 * debugging it anyways.
+		 */
+		uid = UID_ROOT;
+		gid = GID_WHEEL;
+	} else {
+		uid = hdr->ucore_uid;
+		gid = hdr->ucore_gid;
+	}
+	coresize = hdr->ucore_size;
 
-	fflags = sb.st_flags & UCORED_FFLAGS_PRESERVED;
-	uid = sb.st_uid;
-	gid = sb.st_gid;
-	coresize = sb.st_size;
 	ts[0].tv_nsec = UTIME_OMIT;
-	ts[1] = sb.st_mtim;
+	ts[1] = hdr->ucore_time;
 
-	tofd = open(path, O_WRONLY | O_NOFOLLOW | O_CREAT | O_EXCL, sb.st_mode);
+	tofd = open(path, O_WRONLY | O_NOFOLLOW | O_CREAT | O_EXCL,
+	    S_IRUSR | S_IWUSR);
 	if (tofd == -1 && errno == EEXIST) {
 		/*
 		 * If the file already exists, we may be OK to just unlink it
