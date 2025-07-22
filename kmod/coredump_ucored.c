@@ -60,6 +60,7 @@ struct ucoredev_shmfd {
 
 struct coredump_ucore_ctx {
 	struct shmfd			*shmfd;
+	off_t				 corepos;
 };
 
 struct selinfo ucoredev_sel;
@@ -143,8 +144,6 @@ ucoredev_read(struct cdev *dev __unused, struct uio *uio, int flags __unused)
 		MPASS(fd >= 0);
 
 		error = uiomove(&fd, sizeof(int), uio);
-
-		printf("%s: uiomove error == %d\n", __func__, error);
 
 		/*
 		 * If we materialized the file but uiomove() failed for some reason, we
@@ -262,31 +261,52 @@ ucoredev_shmfd_free(struct ucoredev_shmfd *ucs)
 }
 
 static int
+do_write(struct shmfd *shmfd, off_t offset, const void *data, size_t *datasz,
+    enum uio_seg seg, struct thread *td)
+{
+	struct iovec iov;
+	struct uio uio;
+	off_t newsz;
+	int error;
+
+	newsz = MAX(shmfd->shm_size, offset + *datasz);
+	if (shmfd->shm_size < newsz) {
+		error = shm_dotruncate(shmfd, newsz);
+		if (error != 0)
+			return (error);
+	}
+
+	iov.iov_base = __DECONST(void *, data);
+	iov.iov_len = *datasz;
+
+	uio.uio_iov = &iov;
+	uio.uio_iovcnt = 1;
+	uio.uio_offset = offset;
+	uio.uio_resid = *datasz;
+	uio.uio_segflg = seg;
+	uio.uio_rw = UIO_WRITE;
+	uio.uio_td = td;
+
+	error = uiomove_object(shmfd->shm_object, newsz, &uio);
+	*datasz = uio.uio_resid;
+	return (error);
+}
+
+
+static int
 coredump_shmwrite(const struct coredump_writer *cdw, const void *base,
     size_t len, off_t offset, enum uio_seg seg, struct ucred *cred,
     size_t *resid, struct thread *td)
 {
 	struct coredump_ucore_ctx *uctx = cdw->ctx;
-	struct iovec iov;
-	struct uio uio;
 	int error;
 
-	error = coredump_shmextend(cdw, len + offset, cred);
-	if (error != 0)
-		return (error);
+	offset += uctx->corepos;
 
-	iov.iov_base = __DECONST(void *, base);
-	iov.iov_len = len;
-
-	uio.uio_iov = &iov;
-	uio.uio_iovcnt = 1;
-	uio.uio_offset = offset;
-	uio.uio_resid = len;
-	uio.uio_segflg = seg;
-	uio.uio_rw = UIO_WRITE;
-	uio.uio_td = td;
-
-	return (uiomove_object(uctx->shmfd->shm_object, len + offset, &uio));
+	error = do_write(uctx->shmfd, offset, base, &len, seg, td);
+	if (resid != NULL)
+		*resid = len;
+	return (error);
 }
 
 static int
@@ -295,8 +315,45 @@ coredump_shmextend(const struct coredump_writer *cdw, off_t newsz,
 {
 	struct coredump_ucore_ctx *uctx = cdw->ctx;
 
+	newsz += uctx->corepos;
 	MPASS(newsz > uctx->shmfd->shm_size);
 	return (shm_dotruncate(uctx->shmfd, newsz));
+}
+
+static void
+write_segment_string(struct ucore *uc, struct shmfd *shmfd, off_t *poff,
+    enum ucore_data_type type, const char *str, struct thread *td)
+{
+	struct ucore_data_hdr uhdr;
+	size_t datasz, odatasz, writesz;
+	off_t offset = *poff;
+	int error;
+
+	/* Write the header out first. */
+	datasz = strlen(str) + 1 /* NUL */;
+	uhdr.uhdr_type = type;
+	uhdr.uhdr_size = datasz;
+
+	/* We'll just ignore all errors and avoid counting this segment. */
+	writesz = sizeof(uhdr);
+	error = do_write(shmfd, offset, &uhdr, &writesz, UIO_SYSSPACE, td);
+	if (error != 0)
+		return;
+
+	MPASS(writesz == 0);
+	offset += sizeof(uhdr);
+
+	/* Now write out the string itself. */
+	odatasz = datasz;
+	error = do_write(shmfd, offset, str, &datasz, UIO_SYSSPACE, td);
+	if (error != 0)
+		return;
+
+	MPASS(datasz == 0);
+	offset += odatasz;
+
+	*poff = offset;
+	uc->ucore_datasegs++;
 }
 
 static int
@@ -310,30 +367,69 @@ coredump_ucored(struct thread *td, off_t limit)
 {
 	struct coredump_ucore_ctx uctx;
 	struct coredump_writer cdw;
+	struct ucore uc = { };
 	struct ucoredev_shmfd *ucshm;
 	struct shmfd *shm;
 	struct proc *p;
-#if 1
+	struct prison *pr;
+	off_t corepos;
+	size_t datasz;
 	int error;
-#else
-	int error, jid, ppid, sig;
-#endif
 
 	p = td->td_proc;
 	PROC_LOCK_ASSERT(p, MA_OWNED);
 
-#if 0
-	ppid = p->p_oppid;
-	sig = p->p_sig;
-	jid = p->p_ucred->cr_prison->pr_id;
-#endif
+	pr = p->p_ucred->cr_prison;
+
+	uc.ucore_ppid = p->p_oppid;
+	uc.ucore_signo = p->p_sig;
+
+	uc.ucore_jid = pr->pr_id;
+	if (pr->pr_id != 0)
+		prison_hold(pr);
+	else
+		pr = NULL;
+
 	PROC_UNLOCK(p);
+
+	memcpy(&uc.ucore_magic, UCORE_MAGIC, sizeof(uc.ucore_magic));
 
 	/* XXX Should this borrow against a global coredump_ucore ucred? */
 	shm = shm_alloc(p->p_ucred, O_RDONLY, false);
 	MPASS(shm != NULL);
 
+	/*
+	 * Populate our header first.  We skip the header to start with until
+	 * we know exactly how many segments we're going to have, then we'll
+	 * write it out right before we write the core.
+	 */
+	corepos = sizeof(uc);
+	if (pr != NULL) {
+		write_segment_string(&uc, shm, &corepos, UDT_JAIL,
+		    pr->pr_name, td);
+		write_segment_string(&uc, shm, &corepos, UDT_JAILROOT,
+		    pr->pr_path, td);
+		prison_free(pr);
+		pr = NULL;
+	}
+
+
+	/* XXX UDT_COMM from p->p_textvp */
+	/*
+	 * Now return to write the core header out.  Unlike with the data
+	 * segments, this is not optional and we can't really proceed with the
+	 * dump without it.
+	 */
+	datasz = sizeof(uc);
+	error = do_write(shm, 0, &uc, &datasz, UIO_SYSSPACE, td);
+	if (error != 0) {
+		shm_drop(shm);
+		return (error);
+	}
+
+	MPASS(datasz == 0);
 	uctx.shmfd = shm;
+	uctx.corepos = corepos;
 
 	cdw.ctx = &uctx;
 	cdw.write_fn = coredump_shmwrite;
