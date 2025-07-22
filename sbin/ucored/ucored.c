@@ -187,6 +187,7 @@ main(int argc, char *argv[])
 {
 	const char *pidfile = NULL;
 	struct pidfh *pidfh = NULL;
+	struct ucore_dev *udev = NULL;
 	struct ucored_server *userv = NULL;
 	int ch, error = 1, devctl_prev, kq = -1, sock = -1, verbose = 0;
 	bool debug = false, socket_initiated;
@@ -254,29 +255,46 @@ main(int argc, char *argv[])
 	if (!socket_initiated) {
 		struct ucore_readable *ur;
 
-		sock = ucored_sock();
-		if (sock == -1)
-			goto done_nosock;
+		/*
+		 * XXX Should the socket and device be mutually exclusive?
+		 */
+		if (libucore_dev_available()) {
+			udev = libucore_dev_open(ucored_lua_handle);
+			if (udev == NULL) {
+				libucore_log(LOG_ERR, "failed to open /dev/ucore");
+				goto done;
+			}
 
-		if (listen(sock, 10) == -1) {
-			libucore_log(LOG_ERR, "listen: %m");
-			goto done;
+			ur = libucore_dev_readable(udev);
+			if (ucored_watch_socket(kq, ur) == -1)
+				goto done;
+
+			libucore_log(LOG_INFO, "ucored polling /dev/ucore");
+		} else {
+			sock = ucored_sock();
+			if (sock == -1)
+				goto done_nosock;
+
+			if (listen(sock, 10) == -1) {
+				libucore_log(LOG_ERR, "listen: %m");
+				goto done;
+			}
+
+			userv = calloc(1, sizeof(*userv));
+			if (userv == NULL) {
+				libucore_log(LOG_ERR, "calloc: %m");
+				goto done;
+			}
+
+			userv->serv_kq = kq;
+
+			ur = &userv->serv_readable;
+			ur->r_read = ucored_accept;
+			ur->r_fd = sock;
+
+			if (ucored_watch_socket(kq, ur) == -1)
+				goto done;
 		}
-
-		userv = calloc(1, sizeof(*userv));
-		if (userv == NULL) {
-			libucore_log(LOG_ERR, "calloc: %m");
-			goto done;
-		}
-
-		userv->serv_kq = kq;
-
-		ur = &userv->serv_readable;
-		ur->r_read = ucored_accept;
-		ur->r_fd = sock;
-
-		if (ucored_watch_socket(kq, ur) == -1)
-			goto done;
 	} else if (ucored_client_alloc(kq, sock) == NULL) {
 		goto done;
 	}
@@ -290,7 +308,7 @@ main(int argc, char *argv[])
 	 */
 	ucored_signal_setup();
 
-	if (!socket_initiated)
+	if (!socket_initiated && sock >= 0)
 		devctl_prev = devctl_fiddle(1);
 
 	error = ucored_loop(kq);
@@ -300,19 +318,20 @@ main(int argc, char *argv[])
 	 * we'll also want to restore the previous system state for whether or
 	 * not the kernel generates devctl notifications for coredumps.
 	 */
-	if (!socket_initiated && !devctl_prev)
+	if (!socket_initiated && sock >= 0 && !devctl_prev)
 		(void)devctl_fiddle(0);
 
 	ucored_client_close_all();
 
 done:
-	if (!socket_initiated)
+	if (!socket_initiated && sock >= 0)
 		(void)unlink(PATH_UCORED_SOCK);
 done_nosock:
 	pidfile_remove(pidfh);
 
 	if (kq >= 0)
 		close(kq);
+	libucore_dev_close(udev);
 	free(userv);
 	if (sock >= 0)
 		close(sock);

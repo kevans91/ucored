@@ -347,6 +347,32 @@ ucored_ucore_jail(lua_State *L)
 }
 
 static bool
+ucored_copy_file_fallback(int fromfd, int tofd, off_t fsize)
+{
+	/*
+	 * We won't be doing any parallel processing of ucores, unless we move to
+	 * a forking model.  In which case, ~whatever.
+	 */
+	static char buf[MAXPHYS];
+	size_t bufsz = sizeof(buf);
+	off_t copied = 0;
+
+	while (copied < fsize) {
+		size_t clipsz = MIN(fsize - copied, (off_t)bufsz);
+
+		if (!libucore_read_data(fromfd, buf, clipsz))
+			return (false);
+
+		if (!libucore_send_data(tofd, buf, clipsz))
+			return (false);
+
+		copied += clipsz;
+	}
+
+	return (true);
+}
+
+static bool
 ucored_copy_file(int fromfd, int tofd, off_t fsize)
 {
 	off_t copied = 0;
@@ -362,6 +388,14 @@ ucored_copy_file(int fromfd, int tofd, off_t fsize)
 		if (ret == -1) {
 			if (errno == EINTR)
 				continue;
+
+			/*
+			 * EINVAL probably means we're copying from a shmfd rather than a
+			 * file, which is fine.  We'll just fallback to a manual read/write
+			 * loop.
+			 */
+			if (errno == EINVAL && copied == 0)
+				return (ucored_copy_file_fallback(fromfd, tofd, fsize));
 
 			return (false);
 		} else if (ret == 0) {
@@ -387,13 +421,25 @@ ucored_ucore_filename(lua_State *L)
 
 	self = luaL_checkudata(L, 1, UCORED_UCOREHANDLE);
 	corefile = (const char *)ucored_ucore_strfetch_value(self, UDT_PATH);
-	assert(corefile != NULL);	/* XXX */
+	if (corefile == NULL) {
+		/*
+		 * If we came out of a shmfd, then we'll just follow the historical
+		 * convention from the kernel and use <comm>.core.
+		 */
+		corefile = (const char *)ucored_ucore_strfetch_value(self, UDT_COMM);
+		delim = strrchr(corefile, '/');
+		if (delim != NULL)
+			corefile = delim + 1;
 
-	delim = strrchr(corefile, '/');
-	if (delim != NULL)
-		corefile = delim + 1;
+		lua_pushfstring(L, "%s.core", corefile);
+	} else {
+		delim = strrchr(corefile, '/');
+		if (delim != NULL)
+			corefile = delim + 1;
 
-	lua_pushstring(L, corefile);
+		lua_pushstring(L, corefile);
+	}
+
 	return (1);
 }
 
@@ -415,7 +461,6 @@ ucored_ucore_move(lua_State *L)
 	fromfd = tofd = -1;
 	self = luaL_checkudata(L, 1, UCORED_UCOREHANDLE);
 	corepath = (const char *)ucored_ucore_strfetch_value(self, UDT_PATH);
-	assert(corepath != NULL);	/* XXX */
 	path = luaL_checkstring(L, 2);
 
 	up = self->up;
@@ -425,8 +470,11 @@ ucored_ucore_move(lua_State *L)
 	 * We will only attempt a rename if the destination just does not exist.
 	 * If it does, we need to do further evaluation to decide if this is a
 	 * potential security issue or not.
+	 *
+	 * Note that we won't have a path if the core came in via /dev/ucore, so
+	 * all we can do there is copy the core out.
 	 */
-	if (lstat(path, &sb) == -1 && errno == ENOENT) {
+	if (lstat(path, &sb) == -1 && errno == ENOENT && corepath != NULL) {
 		/*
 		 * Attempt to rename first; maybe we'll get lucky.
 		 */
@@ -814,6 +862,7 @@ ucored_lua_handle(struct ucore_provider *up)
 {
 	bool ok;
 
+	/* XXX Perhaps fork here */
 	/* Copy the handler that ucored.lua left on the stack. */
 	lua_pushvalue(ucored_state, -1);
 

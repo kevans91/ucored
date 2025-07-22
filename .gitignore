@@ -3,4 +3,5 @@
 *.debug
 *.pieo
 *.o
+*.orig
 .depend*

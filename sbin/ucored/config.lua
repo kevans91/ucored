@@ -173,7 +173,7 @@ local action_handlers = {
 	move = {
 		apply = function(action, ucore)
 			local dest = process_destpath(ucore, action.destination)
-			local path = ucore:path()
+			local path = (ucore:path() or "<shm>")
 			local ok, err = ucore:move(dest)
 
 			if not ok then

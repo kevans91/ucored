@@ -11,8 +11,21 @@ local rules = config.load()
 
 return function(ucore)
 	local attrs = ucore:attributes()
-	core.info("lua received core for " .. ucore:comm() .. "[pid=" ..
-	    attrs["pid"] .. "] at " .. ucore:path())
+	local comm = ucore:comm() or "unknown"
+	local path = ucore:path()
+	local pwd = ucore:pwd()
+
+	local msg = "lua received core for " .. comm .. "[pid=" .. attrs["pid"] .. "]"
+	if path then
+		msg = msg .. " at " .. path
+	else
+		msg = msg .. " via /dev/ucore"
+	end
+
+	if pwd then
+		msg = msg .. " with pwd " .. pwd
+	end
+	core.info(msg)
 
 	for _, rule in ipairs(rules) do
 		if rule:match(ucore) then
