@@ -160,6 +160,7 @@ ucored_send(int ucored, int jid, int ppid, int pid, int signo, struct stat *sb)
 	uc.ucore_uid = sb->st_uid;
 	uc.ucore_gid = sb->st_gid;
 	uc.ucore_fflags = sb->st_flags;
+	uc.ucore_size = sb->st_size;
 
 	uc.ucore_jid = jid;
 	uc.ucore_ppid = ppid;

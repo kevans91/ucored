@@ -457,19 +457,6 @@ coredump_ucored(struct thread *td, off_t limit)
 
 	pwd_drop(pwd);
 
-	/*
-	 * Now return to write the core header out.  Unlike with the data
-	 * segments, this is not optional and we can't really proceed with the
-	 * dump without it.
-	 */
-	datasz = sizeof(uc);
-	error = do_write(shm, 0, &uc, &datasz, UIO_SYSSPACE, td);
-	if (error != 0) {
-		shm_drop(shm);
-		return (error);
-	}
-
-	MPASS(datasz == 0);
 	uctx.shmfd = shm;
 	uctx.corepos = corepos;
 
@@ -486,6 +473,22 @@ coredump_ucored(struct thread *td, off_t limit)
 		shm_drop(shm);
 		return (error);
 	}
+
+	/*
+	 * Now return to write the core header out.  Unlike with the data
+	 * segments, this is not optional and we can't really proceed with the
+	 * dump without it.
+	 */
+	datasz = sizeof(uc);
+	uc.ucore_size = shm->shm_size - uctx.corepos;
+	uprintf("Recorded size: %zu\n", uc.ucore_size);
+	error = do_write(shm, 0, &uc, &datasz, UIO_SYSSPACE, td);
+	if (error != 0) {
+		shm_drop(shm);
+		return (error);
+	}
+
+	MPASS(datasz == 0);
 
 	ucshm = malloc(sizeof(*ucshm), M_UCORE, M_WAITOK | M_ZERO);
 	ucshm->shmfd = shm;

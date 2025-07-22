@@ -15,6 +15,7 @@ struct ucore {
 	struct timespec	ucore_time;
 	int64_t		ucore_pad1[4];
 	size_t		ucore_datasegs;
+	size_t		ucore_size;
 	int		ucore_signo;
 	int32_t		ucore_pad2[4];
 	int		ucore_uid;
