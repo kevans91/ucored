@@ -542,6 +542,15 @@ ucored_ucore_path(lua_State *L)
 }
 
 static int
+ucored_ucore_pwd(lua_State *L)
+{
+	struct luaucore *self;
+
+	self = luaL_checkudata(L, 1, UCORED_UCOREHANDLE);
+	return (ucored_ucore_strfetch(L, self, UDT_PWD, NULL));
+}
+
+static int
 ucored_spawn_pipe(pid_t *pid, int corefd, char *const *argv,
     const char **errstrp)
 {
@@ -686,6 +695,7 @@ static const luaL_Reg ucored_ucore[] = {
 	UCORE_SIMPLE(filename),
 	UCORE_SIMPLE(move),
 	UCORE_SIMPLE(path),
+	UCORE_SIMPLE(pwd),
 	UCORE_SIMPLE(pipe),
 	{ NULL, NULL },
 };

@@ -42,6 +42,7 @@ enum ucore_data_type {
 	UDT_JAIL,
 	UDT_JAILROOT,
 	UDT_PATH,
+	UDT_PWD,
 };
 
 struct ucore_data_hdr {
