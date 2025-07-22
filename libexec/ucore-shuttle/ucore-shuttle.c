@@ -7,6 +7,7 @@
 #include <sys/param.h>
 #include <sys/queue.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/un.h>
 
 #include <assert.h>
@@ -145,14 +146,21 @@ add_segment(enum ucore_data_type type, const void *payload, size_t payloadsz)
 }
 
 static int
-ucored_send(int ucored, int jid, int ppid, int pid, int signo)
+ucored_send(int ucored, int jid, int ppid, int pid, int signo, struct stat *sb)
 {
 	struct ucore_shuttle_data *sd;
-	struct ucore uc = { 0 };
+	struct ucore uc = { };
 
 	assert(sd_nsegments != 0);
 	memcpy(&uc.ucore_magic[0], UCORE_MAGIC, sizeof(uc.ucore_magic));
 	uc.ucore_datasegs = sd_nsegments;
+
+	/* File details */
+	uc.ucore_time = sb->st_mtim;
+	uc.ucore_uid = sb->st_uid;
+	uc.ucore_gid = sb->st_gid;
+	uc.ucore_fflags = sb->st_flags;
+
 	uc.ucore_jid = jid;
 	uc.ucore_ppid = ppid;
 	uc.ucore_pid = pid;
@@ -204,6 +212,7 @@ main(int argc, char *argv[])
 {
 	char jailpath[MAXPATHLEN];
 	char jailname[MAXHOSTNAMELEN];
+	struct stat sb;
 	const char *comm, *core;
 	char *corepath;
 	const char *errstr, *jail = NULL;
@@ -280,6 +289,9 @@ main(int argc, char *argv[])
 	if (corepath == NULL) {
 		libucore_log(LOG_ERR, "resolve_path: %m");
 		return (1);
+	} else if (stat(corepath, &sb) == -1) {
+		libucore_log(LOG_ERR, "%s: stat: %m", corepath);
+		return (1);
 	}
 
 	ucored = ucored_connect();
@@ -304,7 +316,7 @@ main(int argc, char *argv[])
 			goto out;
 	}
 
-	error = ucored_send(ucored, jid, ppid, pid, signo);
+	error = ucored_send(ucored, jid, ppid, pid, signo, &sb);
 
 	shutdown(ucored, SHUT_WR);
 	if (error == 0)

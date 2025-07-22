@@ -11,6 +11,7 @@
 #include <sys/filio.h>
 #include <sys/imgact.h>
 #include <sys/fcntl.h>
+#include <sys/filedesc.h>
 #include <sys/jail.h>
 #include <sys/kernel.h>
 #include <sys/limits.h>
@@ -26,8 +27,10 @@
 #include <sys/selinfo.h>
 #include <sys/syscallsubr.h>
 #include <sys/sysent.h>
+#include <sys/ucoredump.h>
 #include <sys/ucred.h>
 #include <sys/uio.h>
+#include <sys/vnode.h>
 #include <sys/unistd.h>
 #include <sys/queue.h>
 
@@ -79,7 +82,11 @@ static coredump_extend_fn coredump_shmextend;
 
 static coredumper_probe_fn coredump_ucored_probe;
 static coredumper_handle_fn coredump_ucored;
-COREDUMP_HANDLER(coredump_ucored, coredump_ucored_probe, coredump_ucored);
+struct coredumper ucoredev_coredumper = {
+	.cd_name = "ucoredev",
+	.cd_probe = coredump_ucored_probe,
+	.cd_handle = coredump_ucored,
+};
 
 static MALLOC_DEFINE(M_UCORE, "ucorebufs", "ucore descriptor buffers");
 
@@ -372,6 +379,10 @@ coredump_ucored(struct thread *td, off_t limit)
 	struct shmfd *shm;
 	struct proc *p;
 	struct prison *pr;
+	struct pwd *pwd;
+	struct vnode *cwd;
+	struct ucred *cred;
+	char *fullpath, *freepath = NULL;
 	off_t corepos;
 	size_t datasz;
 	int error;
@@ -379,17 +390,24 @@ coredump_ucored(struct thread *td, off_t limit)
 	p = td->td_proc;
 	PROC_LOCK_ASSERT(p, MA_OWNED);
 
-	pr = p->p_ucred->cr_prison;
+	cred = p->p_ucred;
+	pr = cred->cr_prison;
+
+	vfs_timestamp(&uc.ucore_time);
+	uc.ucore_pid = p->p_pid;
+	uc.ucore_uid = cred->cr_uid;
+	uc.ucore_gid = cred->cr_gid;
+	uc.ucore_tainted = (p->p_flag & P_SUGID) != 0;
 
 	uc.ucore_ppid = p->p_oppid;
 	uc.ucore_signo = p->p_sig;
-
 	uc.ucore_jid = pr->pr_id;
 	if (pr->pr_id != 0)
 		prison_hold(pr);
 	else
 		pr = NULL;
 
+	pwd = pwd_hold(td);
 	PROC_UNLOCK(p);
 
 	memcpy(&uc.ucore_magic, UCORE_MAGIC, sizeof(uc.ucore_magic));
@@ -413,8 +431,32 @@ coredump_ucored(struct thread *td, off_t limit)
 		pr = NULL;
 	}
 
+	/*
+	 * If our best effort fails, at least provide p_comm as a hint
+	 * to the command run.
+	 */
+	if (vn_fullpath_global(p->p_textvp, &fullpath, &freepath) == 0) {
+		write_segment_string(&uc, shm, &corepos, UDT_COMM,
+		    fullpath, td);
+		free(freepath, M_TEMP);
+		freepath = NULL;
+	} else {
+		write_segment_string(&uc, shm, &corepos, UDT_COMM,
+		    p->p_comm, td);
+	}
 
-	/* XXX UDT_COMM from p->p_textvp */
+	/* Grab the process cwd, as well. */
+	cwd = pwd->pwd_cdir;
+	if (cwd != NULL && vn_fullpath_global(cwd, &fullpath,
+	    &freepath) == 0) {
+		write_segment_string(&uc, shm, &corepos, UDT_PWD,
+		    fullpath, td);
+		free(freepath, M_TEMP);
+		freepath = NULL;
+	}
+
+	pwd_drop(pwd);
+
 	/*
 	 * Now return to write the core header out.  Unlike with the data
 	 * segments, this is not optional and we can't really proceed with the
@@ -467,6 +509,7 @@ coredump_ucored_modevent(module_t mod __unused, int type, void *data __unused)
 		knlist_init_mtx(&ucoredev_sel.si_note, &ucoredev_mtx);
 		ucore_dev = make_dev_credf(MAKEDEV_ETERNAL_KLD, &ucore_cdevsw,
 		    0, NULL, UID_ROOT, GID_WHEEL, 0400, "ucore");
+		coredumper_register(&ucoredev_coredumper);
 		break;
 
 	case MOD_UNLOAD:
@@ -475,6 +518,7 @@ coredump_ucored_modevent(module_t mod __unused, int type, void *data __unused)
 		knlist_clear(&ucoredev_sel.si_note, 0);
 		seldrain(&ucoredev_sel);
 		knlist_destroy(&ucoredev_sel.si_note);
+		coredumper_unregister(&ucoredev_coredumper);
 
 		UCORE_LOCK();
 		while (!STAILQ_EMPTY(&ucores)) {

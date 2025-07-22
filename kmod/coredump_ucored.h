@@ -12,14 +12,19 @@
 
 struct ucore {
 	char		ucore_magic[sizeof(UCORE_MAGIC) - 1];
+	struct timespec	ucore_time;
 	int64_t		ucore_pad1[4];
 	size_t		ucore_datasegs;
 	int		ucore_signo;
 	int32_t		ucore_pad2[4];
+	int		ucore_uid;
+	int		ucore_gid;
 	int		ucore_jid;
+	fflags_t	ucore_fflags;
 	pid_t		ucore_ppid;
 	pid_t		ucore_pid;
 	int8_t		ucore_pad3[8];
+	bool		ucore_tainted;
 };
 
 struct ucore_ack {
