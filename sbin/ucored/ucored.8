@@ -3,7 +3,7 @@
 .\"
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
-.Dd July 18, 2025
+.Dd July 23, 2025
 .Dt UCORED 8
 .Os
 .Sh NAME
@@ -150,6 +150,14 @@ These substitutions are applied to all parts of the path, not just the filename
 component.
 The following substitutions may be requested:
 .Bl -tag -width indent
+.It Dq \&%d
+The domainname of the jail that the process belonged to, or the host if the
+process was unjailed.
+If unset, this will expand to the empty string.
+.It Dq \&%h
+The hostname of the jail that the process belonged to, or the host if the
+process was unjailed.
+If unset, this will expand to the empty string.
 .It Dq \&%j
 The jid of the jail that the process belonged to.
 This will be 0 for unjailed processes.

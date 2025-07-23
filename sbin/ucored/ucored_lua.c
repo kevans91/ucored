@@ -346,6 +346,24 @@ ucored_ucore_comm(lua_State *L)
 }
 
 static int
+ucored_ucore_domainname(lua_State *L)
+{
+	struct luaucore *self;
+
+	self = luaL_checkudata(L, 1, UCORED_UCOREHANDLE);
+	return (ucored_ucore_strfetch(L, self, UDT_DOMAINNAME, ""));
+}
+
+static int
+ucored_ucore_hostname(lua_State *L)
+{
+	struct luaucore *self;
+
+	self = luaL_checkudata(L, 1, UCORED_UCOREHANDLE);
+	return (ucored_ucore_strfetch(L, self, UDT_HOSTNAME, ""));
+}
+
+static int
 ucored_ucore_jail(lua_State *L)
 {
 	struct luaucore *self;
@@ -814,6 +832,8 @@ ucored_ucore_pipe(lua_State *L)
 static const luaL_Reg ucored_ucore[] = {
 	UCORE_SIMPLE(attributes),
 	UCORE_SIMPLE(comm),
+	UCORE_SIMPLE(domainname),
+	UCORE_SIMPLE(hostname),
 	UCORE_SIMPLE(jail),
 	UCORE_SIMPLE(filename),
 	UCORE_SIMPLE(move),

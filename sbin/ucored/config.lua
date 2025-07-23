@@ -21,6 +21,8 @@ end
 local function replace_symbols(ucore, path)
 	local attrs = ucore:attributes()
 	local symbols = {
+		["%d"] = ucore:domainname(),
+		["%h"] = ucore:hostname(),
 		["%j"] = attrs.jid,
 		["%n"] = ucore:filename(),
 		["%P"] = attrs.ppid,
@@ -252,6 +254,8 @@ local action_handlers = {
 -- These need to have matching methods on the ucore object.
 local valid_matchfields = {
 	comm = true,
+	domainname = true,
+	hostname = true,
 	jail = true,
 	path = true,
 }
@@ -297,7 +301,7 @@ function Rule:apply(ucore)
 end
 function Rule:match(ucore)
 	for field, reg in pairs(self.matchers) do
-		local value = ucore[field](ucore)
+		local value = ucore[field](ucore) or ""
 
 		if not reg:find(value) then
 			return false
