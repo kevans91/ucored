@@ -860,26 +860,57 @@ ucored_lua_push_ucore(struct ucore_provider *up)
 bool
 ucored_lua_handle(struct ucore_provider *up)
 {
-	bool ok;
+	pid_t p;
 
-	/* XXX Perhaps fork here */
-	/* Copy the handler that ucored.lua left on the stack. */
-	lua_pushvalue(ucored_state, -1);
+	p = fork();
+	if (p == -1) {
+		libucore_log(LOG_ERR, "fork: %m");
 
-	ucored_lua_push_ucore(up);
-	if (lua_pcall(ucored_state, 1, 1, 0)) {
-		const char *err;
-
-		err = lua_tostring(ucored_state, -1);
-		if (err == NULL)
-			err = "unknown";
-
-		libucore_log(LOG_ERR, "%s\n", err);
-		lua_pop(ucored_state, 1);
-		return (false);
+		/*
+		 * We only fork to try and parallelize this stuff better, so
+		 * we'll just continue on serialized if it fails.  Our stack
+		 * handling below is expected to be correct for serialized
+		 * modes by not leaving anything goofy on the stack.
+		 */
 	}
 
-	ok = lua_toboolean(ucored_state, -1);
-	lua_pop(ucored_state, 1);
-	return (ok);
+	if (p <= 0) {
+		bool ok;
+
+#define	FINISHED(ret) do {			\
+		if (p == 0)			\
+			_exit(ret ? 0 : 1);	\
+		else				\
+			return (ret);		\
+} while(0)
+		if (p == 0) {
+			const struct ucore *hdr;
+
+			hdr = (*up->p_fetch_header)(up);
+			libucore_log(LOG_INFO, "forked to handle core for pid=%d",
+			    hdr->ucore_pid);
+		}
+
+		/* Copy the handler that ucored.lua left on the stack. */
+		lua_pushvalue(ucored_state, -1);
+
+		ucored_lua_push_ucore(up);
+		if (lua_pcall(ucored_state, 1, 1, 0)) {
+			const char *err;
+
+			err = lua_tostring(ucored_state, -1);
+			if (err == NULL)
+				err = "unknown";
+
+			libucore_log(LOG_ERR, "%s\n", err);
+			lua_pop(ucored_state, 1);
+			FINISHED(false);
+		}
+
+		ok = lua_toboolean(ucored_state, -1);
+		lua_pop(ucored_state, 1);
+		FINISHED(ok);
+	}
+
+	return (true);
 }

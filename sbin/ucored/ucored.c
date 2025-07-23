@@ -10,6 +10,7 @@
 #include <sys/stat.h>
 #include <sys/sysctl.h>
 #include <sys/un.h>
+#include <sys/wait.h>
 
 #include <assert.h>
 #include <err.h>
@@ -51,11 +52,41 @@ static bool ucored_accept(struct ucore_readable *, size_t, bool);
 sig_atomic_t ucored_terminate;
 
 static void
-handle_signal(int signo __unused)
+handle_termsig(int signo __unused)
 {
 
 	ucored_terminate = 1;
 	atomic_signal_fence(memory_order_release);
+}
+
+static void
+handle_sigchld(int signo __unused)
+{
+	pid_t wpid;
+	int status;
+
+	while ((wpid = waitpid(0, &status, WNOHANG)) != 0) {
+		if (wpid == -1) {
+			if (errno == EINTR)
+				continue;
+			if (errno == ECHILD)
+				break;
+
+			__assert_unreachable();
+		}
+
+		/*
+		 * None of this async-signal-safe.  Whoops.
+		 */
+		if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+			libucore_log(LOG_NOTICE,
+			    "Child %d terminated abnormally (status=%x)",
+			    wpid, status);
+			continue;
+		}
+
+		libucore_log(LOG_INFO, "Child %d terminated OK", wpid);
+	}
 }
 
 static void
@@ -64,11 +95,14 @@ ucored_signal_setup(void)
 	sigset_t set;
 	struct sigaction sa = {
 		/* No SA_RESTART */
-		.sa_handler = handle_signal,
+		.sa_handler = handle_termsig,
 	};
 
 	(void)sigaction(SIGINT, &sa, NULL);
 	(void)sigaction(SIGTERM, &sa, NULL);
+
+	sa.sa_handler = handle_sigchld;
+	(void)sigaction(SIGCHLD, &sa, NULL);
 
 	sigemptyset(&set);
 	sigaddset(&set, SIGINT);

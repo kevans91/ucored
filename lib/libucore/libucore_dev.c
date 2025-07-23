@@ -104,8 +104,6 @@ libucore_dev_read(struct ucore_readable *ur, size_t avail, bool eof __unused)
 		avail -= sizeof(int);
 		assert(corefd >= 0);
 
-		libucore_log(LOG_INFO, "process fd %d", corefd);
-
 		/* The core owns the corefd now, it will be closed at free. */
 		core = libucore_dev_core_decode(corefd);
 		if (core != NULL) {
@@ -113,7 +111,10 @@ libucore_dev_read(struct ucore_readable *ur, size_t avail, bool eof __unused)
 			    core->core_ndatasegs, core->core_datasz);
 		}
 
-		/* Call handle callback */
+		/*
+		 * Call handle callback; this is usually async, so the logging
+		 * afterwards may not do anything of value.
+		 */
 		if (!(*udev->dev_handler)(&core->core_provider))
 			libucore_log(LOG_ERR, "Core failed to process");
 

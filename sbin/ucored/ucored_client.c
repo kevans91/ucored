@@ -348,7 +348,10 @@ ucored_client_done(struct ucored_client *cl)
 	libucore_log(LOG_INFO, "Core details received [pid=%d, ppid=%d, signo=%d]",
 	    cl->cl_hdr.ucore_pid, cl->cl_hdr.ucore_ppid, cl->cl_hdr.ucore_signo);
 
-	ucored_lua_handle(&cl->cl_provider);
+	if (!ucored_lua_handle(&cl->cl_provider)) {
+		libucore_log(LOG_ERR, "Core[pid=%d] failed to process",
+		    cl->cl_hdr.ucore_pid);
+	}
 
 	ucored_client_close(cl, true);
 }
