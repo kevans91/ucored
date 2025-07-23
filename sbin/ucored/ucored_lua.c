@@ -24,6 +24,13 @@
 
 #include "ucored.h"
 
+#ifndef PREFIX
+#define	PREFIX	"/usr/local"
+#endif
+#ifndef UCORED_CFGFILE
+#define	UCORED_CFGFILE	PREFIX "/etc/ucored.conf"
+#endif
+
 /*
  * Preserve the nouchg and nodump flag; I can't see much reason anyone
  * would want to set the others off-hand.
@@ -777,6 +784,9 @@ luaopen_core(lua_State *L)
 {
 
 	luaL_newlib(L, corelib);
+
+	lua_pushstring(L, UCORED_CFGFILE);
+	lua_setfield(L, -2, "cfgfile");
 
 	luaL_newmetatable(L, UCORED_REGEXHANDLE);
 	luaL_setfuncs(L, ucored_regex_meta, 0);

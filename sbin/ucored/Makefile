@@ -13,6 +13,11 @@ SRCS=	ucored.c \
 
 SHAREDIR?=	${PREFIX:U/usr/local}/share/ucored
 
+FILESGROUPS=	CONFIG FILES
+
+CONFIG=		ucored.conf
+CONFIGDIR=	${PREFIX:U/usr/local}/etc
+
 FILES+=		config.lua
 FILES+=		ucored.lua
 FILESDIR=	${SHAREDIR}

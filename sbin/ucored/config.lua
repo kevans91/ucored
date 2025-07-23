@@ -6,6 +6,7 @@
 
 local config = {}
 local core = require('core')
+local ucl = require('ucl')
 
 -- Assumes fullpath is actually a path to a file, which is the case with
 -- ucore:path() at least.
@@ -255,34 +256,23 @@ local valid_matchfields = {
 	path = true,
 }
 
--- Our default action is to move all cores to /var/ucrash and add the pid to
--- uniquify each one in case we were to crash again.
-local builtin = {
-	match = {
-		comm = ".*",
-	},
-
-	action = {
-		type = "move",
-		destination = "/var/ucrash/%n.%p",
-	},
-}
-
 local Rule = {}
-function Rule:new(name, matchers, action)
+function Rule:new(name, matchers, actions)
 	if not next(matchers) then
 		error("rule " .. name .. " has no specified match patterns")
 	end
-	if not next(action) then
+	if #actions == 0 then
 		error("rule " .. name .. " has no specified action")
 	end
 
-	local handler = action_handlers[action.type]
-	if not handler then
-		error("rule " .. name .. " has an invalid action '" ..
-		    action.type .. "'")
-	elseif handler.validate then
-		handler.validate(action)
+	for _, action in ipairs(actions) do
+		local handler = action_handlers[action.type]
+		if not handler then
+			error("rule " .. name .. " has an invalid action '" ..
+				action.type .. "'")
+		elseif handler.validate then
+			handler.validate(action)
+		end
 	end
 
 	local obj = setmetatable({}, self)
@@ -290,14 +280,20 @@ function Rule:new(name, matchers, action)
 
 	obj.name = name
 	obj.matchers = matchers
-	obj.action = action
+	obj.actions = actions
 	return obj
 end
 function Rule:apply(ucore)
-	local action = self.action
-	local handler = action_handlers[action.type]
+	for _, action in ipairs(self.actions) do
+		local handler = action_handlers[action.type]
 
-	return handler.apply(action, ucore)
+		if not handler.apply(action, ucore) then
+			core.error(action.type .. " in current rule pipeline failed")
+			return false
+		end
+	end
+
+	return true
 end
 function Rule:match(ucore)
 	for field, reg in pairs(self.matchers) do
@@ -323,14 +319,48 @@ local function process_rule(name, rule)
 		matchers[type] = core.regcomp(pattern)
 	end
 
-	return Rule:new(name, matchers, rule.action)
+	if #rule.execute == 0 and rule.execute['type'] ~= nil then
+		rule.execute = { rule.execute }
+	end
+
+	return Rule:new(name, matchers, rule.execute)
 end
 
 function config.load()
-	-- XXX: Actually load something when we get libucl
-	return {
-		process_rule("builtin", builtin),
-	}
+	local parser = ucl.parser()
+	local cfgfile = core.cfgfile
+
+	local function cfg_error(msg)
+		error(cfgfile .. ": " .. msg)
+	end
+
+	local ok, err = parser:parse_file(cfgfile)
+	if not ok then
+		cfg_error(err)
+	end
+
+	local cfg = parser:get_object()
+	if not cfg['filters'] or type(cfg['filters']) ~= 'table' then
+		cfg_errors("filters config must be an object or array")
+	end
+
+	-- A bit of syntactic sugar: a single filter may be specified as just an
+	-- object assigned to the filters key.
+	if #cfg['filters'] == 0 and cfg['filters']['match'] then
+		cfg['filters'] = { cfg['filters'] }
+	end
+	if #cfg['filters'] == 0 then
+		cfg_error("no filters provided")
+	end
+
+	local rules = {}
+	for idx, filter in ipairs(cfg['filters']) do
+		local name = cfg['name'] or ("rule #" .. tostring(idx))
+
+		rules[#rules + 1] = process_rule(idx, filter)
+	end
+
+	return rules
 end
 
 return config
