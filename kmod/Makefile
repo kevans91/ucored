@@ -1,5 +1,5 @@
-KMOD=	coredump_ucored
-SRCS=	coredump_ucored.c \
+KMOD=	ucoredev
+SRCS=	ucoredev.c \
 	vnode_if.h
 
 CFLAGS+=	-DINVARIANTS -DINVARIANT_SUPPORT

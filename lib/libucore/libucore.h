@@ -9,7 +9,7 @@
 #include <stdbool.h>
 #include <syslog.h>
 
-#include "coredump_ucored.h"
+#include "ucoredev.h"
 
 #define	PATH_UCORED_SOCK	"/var/run/ucored.sock"
 

@@ -34,7 +34,7 @@
 #include <sys/unistd.h>
 #include <sys/queue.h>
 
-#include "coredump_ucored.h"
+#include "ucoredev.h"
 
 static d_open_t ucoredev_open;
 static d_read_t ucoredev_read;
@@ -80,12 +80,12 @@ static const struct filterops ucoredev_read_filterops = {
 static coredump_write_fn coredump_shmwrite;
 static coredump_extend_fn coredump_shmextend;
 
-static coredumper_probe_fn coredump_ucored_probe;
-static coredumper_handle_fn coredump_ucored;
+static coredumper_probe_fn coredump_ucoredev_probe;
+static coredumper_handle_fn coredump_ucoredev;
 struct coredumper ucoredev_coredumper = {
 	.cd_name = "ucoredev",
-	.cd_probe = coredump_ucored_probe,
-	.cd_handle = coredump_ucored,
+	.cd_probe = coredump_ucoredev_probe,
+	.cd_handle = coredump_ucoredev,
 };
 
 static MALLOC_DEFINE(M_UCORE, "ucorebufs", "ucore descriptor buffers");
@@ -364,13 +364,13 @@ write_segment_string(struct ucore *uc, struct shmfd *shmfd, off_t *poff,
 }
 
 static int
-coredump_ucored_probe(struct thread *td)
+coredump_ucoredev_probe(struct thread *td)
 {
 	return (COREDUMPER_SPECIAL);
 }
 
 static int
-coredump_ucored(struct thread *td, off_t limit)
+coredump_ucoredev(struct thread *td, off_t limit)
 {
 	struct coredump_ucore_ctx uctx;
 	struct coredump_writer cdw;
@@ -505,7 +505,7 @@ coredump_ucored(struct thread *td, off_t limit)
 }
 
 static int
-coredump_ucored_modevent(module_t mod __unused, int type, void *data __unused)
+ucoredev_modevent(module_t mod __unused, int type, void *data __unused)
 {
 	switch(type) {
 	case MOD_LOAD:
@@ -548,5 +548,5 @@ coredump_ucored_modevent(module_t mod __unused, int type, void *data __unused)
 	return (0);
 }
 
-DEV_MODULE(coredump_ucored, coredump_ucored_modevent, NULL);
-MODULE_VERSION(coredump_ucored, 1);
+DEV_MODULE(ucoredev, ucoredev_modevent, NULL);
+MODULE_VERSION(ucoredev, 1);
