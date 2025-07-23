@@ -44,7 +44,7 @@ usage(void)
  */
 static char *
 resolve_path(int jid, int pid, const char *comm, const char *core,
-    char *ojailpath, char *ojailname)
+    char *ojailpath, char *ojailname, char *odomainname, char *ohostname)
 {
 	char *corepath;
 	char strjid[16];
@@ -55,7 +55,8 @@ resolve_path(int jid, int pid, const char *comm, const char *core,
 	(void)snprintf(strjid, sizeof(strjid), "%d", jid);
 
 	if (jail_getv(0, "jid", strjid, "path", ojailpath,
-	    "name", ojailname, NULL) == -1) {
+	    "name", ojailname, "host.domainname", odomainname,
+	    "host.hostname", ohostname,  NULL) == -1) {
 		libucore_log(LOG_ERR,
 		    "%s: jid %s for %s[pid=%d] seems to have disappeared",
 		    core, strjid, comm, pid);
@@ -211,15 +212,16 @@ ucored_recv_ack(int ucored)
 int
 main(int argc, char *argv[])
 {
-	char jailpath[MAXPATHLEN];
-	char jailname[MAXHOSTNAMELEN];
+	char jailpath[MAXPATHLEN] = { };
+	char jailname[MAXHOSTNAMELEN] = { };
+	char domainname[MAXHOSTNAMELEN] = { };
+	char hostname[MAXHOSTNAMELEN] = { };
 	struct stat sb;
 	const char *comm, *core;
 	char *corepath;
 	const char *errstr, *jail = NULL;
 	int ch, error = 1, jid = 0, ppid = 0, pid = 0, signo = 0, ucored = -1;
 
-	memset(jailname, 0, sizeof(jailname));
 	while ((ch = getopt(argc, argv, "j:P:p:s:")) != -1) {
 		switch (ch) {
 		case 'j':
@@ -286,7 +288,7 @@ main(int argc, char *argv[])
 	}
 
 	corepath = resolve_path(jid, pid, comm, core, &jailpath[0],
-	    &jailname[0]);
+	    &jailname[0], &domainname[0], &hostname[0]);
 	if (corepath == NULL) {
 		libucore_log(LOG_ERR, "resolve_path: %m");
 		return (1);
@@ -315,7 +317,18 @@ main(int argc, char *argv[])
 		    strlen(jailpath) + 1);
 		if (error != 0)
 			goto out;
+	} else {
+		/* Not jailed, grab from the host. */
+		(void)getdomainname(domainname, sizeof(domainname));
+		(void)gethostname(hostname, sizeof(hostname));
 	}
+
+	if (domainname[0] != '\0' && (error = add_segment(UDT_DOMAINNAME,
+	    domainname, strlen(domainname) + 1)) != 0)
+		goto out;
+	if (hostname[0] != '\0' && (error = add_segment(UDT_HOSTNAME,
+	    hostname, strlen(hostname) + 1)) != 0)
+		goto out;
 
 	error = ucored_send(ucored, jid, ppid, pid, signo, &sb);
 

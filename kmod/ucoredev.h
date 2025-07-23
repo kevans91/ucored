@@ -50,6 +50,8 @@ enum ucore_data_type {
 	UDT_JAILROOT,
 	UDT_PATH,
 	UDT_PWD,
+	UDT_HOSTNAME,
+	UDT_DOMAINNAME,
 };
 
 struct ucore_data_hdr {

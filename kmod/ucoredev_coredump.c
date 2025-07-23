@@ -180,10 +180,7 @@ coredump_ucoredev(struct thread *td, off_t limit)
 	uc.ucore_ppid = p->p_oppid;
 	uc.ucore_signo = p->p_sig;
 	uc.ucore_jid = pr->pr_id;
-	if (pr->pr_id != 0)
-		prison_hold(pr);
-	else
-		pr = NULL;
+	prison_hold(pr);
 
 	pwd = pwd_hold(td);
 	PROC_UNLOCK(p);
@@ -200,14 +197,27 @@ coredump_ucoredev(struct thread *td, off_t limit)
 	 * write it out right before we write the core.
 	 */
 	corepos = sizeof(uc);
-	if (pr != NULL) {
+	/*
+
+	 * No need to write out our jail name/path for the host system,
+	 * but some other system properties use prison0 for their
+	 * storage (e.g., hostname/domainname) so we'll just ignore these that
+	 * aren't as useful.
+	 */
+	if (pr->pr_id != 0) {
 		write_segment_string(&uc, shm, &corepos, UDT_JAIL,
 		    pr->pr_name, td);
 		write_segment_string(&uc, shm, &corepos, UDT_JAILROOT,
 		    pr->pr_path, td);
-		prison_free(pr);
-		pr = NULL;
 	}
+
+	write_segment_string(&uc, shm, &corepos, UDT_DOMAINNAME,
+	    pr->pr_domainname, td);
+	write_segment_string(&uc, shm, &corepos, UDT_HOSTNAME,
+	    pr->pr_hostname, td);
+
+	prison_free(pr);
+	pr = NULL;
 
 	/*
 	 * If our best effort fails, at least provide p_comm as a hint
