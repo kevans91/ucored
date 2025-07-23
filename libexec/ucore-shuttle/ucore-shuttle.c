@@ -12,6 +12,7 @@
 
 #include <assert.h>
 #include <errno.h>
+#include <magic.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -147,7 +148,8 @@ add_segment(enum ucore_data_type type, const void *payload, size_t payloadsz)
 }
 
 static int
-ucored_send(int ucored, int jid, int ppid, int pid, int signo, struct stat *sb)
+ucored_send(int ucored, int jid, int ppid, int pid, int signo,
+    enum ucore_compression ucomp, struct stat *sb)
 {
 	struct ucore_shuttle_data *sd;
 	struct ucore uc = { };
@@ -167,6 +169,7 @@ ucored_send(int ucored, int jid, int ppid, int pid, int signo, struct stat *sb)
 	uc.ucore_ppid = ppid;
 	uc.ucore_pid = pid;
 	uc.ucore_signo = signo;
+	uc.ucore_compression = ucomp;
 
 	if (!libucore_send_data(ucored, &uc, sizeof(uc)))
 		return (1);
@@ -209,6 +212,58 @@ ucored_recv_ack(int ucored)
 	return (ack.ucore_status);
 }
 
+static enum ucore_compression
+ucore_compression_type(const char *corepath)
+{
+	enum ucore_compression ucomp = UCOMP_UNKNOWN;
+	magic_t cookie;
+	const char *mime;
+
+	cookie = magic_open(MAGIC_MIME_TYPE | MAGIC_NO_CHECK_COMPRESS);
+	if (cookie == NULL) {
+		libucore_log(LOG_ERR,
+		    "cannot determine compression type: magic_open failed");
+		goto out;
+	}
+
+	if (magic_load(cookie, NULL) != 0) {
+		libucore_log(LOG_ERR,
+		    "cannot determine compression type: load error: %s",
+		    magic_error(cookie));
+		goto out;
+	}
+
+	mime = magic_file(cookie, corepath);
+	if (mime == NULL) {
+		libucore_log(LOG_ERR,
+		    "cannot determine compression type: analysis error: %s",
+		    magic_error(cookie));
+		goto out;
+	}
+
+	if (strcmp(mime, "application/x-coredump") == 0)
+		ucomp = UCOMP_NONE;
+	else if (strcmp(mime, "application/gzip") == 0)
+		ucomp = UCOMP_GZIP;
+	else if (strcmp(mime, "application/zstd") == 0)
+		ucomp = UCOMP_ZSTD;
+
+	if (ucomp == UCOMP_UNKNOWN) {
+		libucore_log(LOG_ERR,
+		    "cannot determine compression type from MIME type: %s",
+		    mime);
+	} else {
+		libucore_log(LOG_NOTICE,
+		    "determined compression type %d from MIME type: %s",
+		    ucomp, mime);
+	}
+out:
+	if (cookie != NULL)
+		magic_close(cookie);
+
+	return (ucomp);
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -221,6 +276,7 @@ main(int argc, char *argv[])
 	char *corepath;
 	const char *errstr, *jail = NULL;
 	int ch, error = 1, jid = 0, ppid = 0, pid = 0, signo = 0, ucored = -1;
+	enum ucore_compression ucomp;
 
 	while ((ch = getopt(argc, argv, "j:P:p:s:")) != -1) {
 		switch (ch) {
@@ -297,6 +353,7 @@ main(int argc, char *argv[])
 		return (1);
 	}
 
+	ucomp = ucore_compression_type(corepath);
 	ucored = ucored_connect();
 	if (ucored == -1) {
 		free(corepath);
@@ -330,7 +387,7 @@ main(int argc, char *argv[])
 	    hostname, strlen(hostname) + 1)) != 0)
 		goto out;
 
-	error = ucored_send(ucored, jid, ppid, pid, signo, &sb);
+	error = ucored_send(ucored, jid, ppid, pid, signo, ucomp, &sb);
 
 	shutdown(ucored, SHUT_WR);
 	if (error == 0)

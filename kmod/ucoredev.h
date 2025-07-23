@@ -26,6 +26,7 @@ struct ucore {
 	pid_t		ucore_ppid;
 	pid_t		ucore_pid;
 	int8_t		ucore_pad3[8];
+	int8_t		ucore_compression;
 	bool		ucore_tainted;
 };
 
@@ -43,6 +44,14 @@ struct ucore_ack {
 
 #define	UCORED_MAXSEGS	32		/* Max # data segments */
 #define	UCORED_MAXSEGSZ	(1024 * 4)	/* 4k segments at most. */
+
+/* These conveniently map to sys/compressor.h constants, where applicable. */
+enum ucore_compression {
+	UCOMP_UNKNOWN = -1,
+	UCOMP_NONE,
+	UCOMP_GZIP,
+	UCOMP_ZSTD,
+};
 
 enum ucore_data_type {
 	UDT_COMM = 0,

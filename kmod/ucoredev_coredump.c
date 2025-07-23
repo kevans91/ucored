@@ -5,6 +5,7 @@
  */
 
 #include <sys/param.h>
+#include <sys/compressor.h>
 #include <sys/event.h>
 #include <sys/exec.h>
 #include <sys/filio.h>
@@ -32,8 +33,10 @@
 struct coredump_ucore_ctx {
 	struct shmfd			*shmfd;
 	off_t				 corepos;
+	int				 compression;
 };
 
+static coredump_init_fn coredump_shminit;
 static coredump_write_fn coredump_shmwrite;
 static coredump_extend_fn coredump_shmextend;
 
@@ -77,6 +80,15 @@ do_write(struct shmfd *shmfd, off_t offset, const void *data, size_t *datasz,
 	return (error);
 }
 
+static int
+coredump_shminit(const struct coredump_writer *cdw,
+    const struct coredump_params *cdp __unused, int compression)
+{
+	struct coredump_ucore_ctx *uctx = cdw->ctx;
+
+	uctx->compression = compression;
+	return (0);
+}
 
 static int
 coredump_shmwrite(const struct coredump_writer *cdw, const void *base,
@@ -150,7 +162,7 @@ coredump_ucoredev_probe(struct thread *td)
 static int
 coredump_ucoredev(struct thread *td, off_t limit)
 {
-	struct coredump_ucore_ctx uctx;
+	struct coredump_ucore_ctx uctx = { };
 	struct coredump_writer cdw;
 	struct ucore uc = { };
 	struct ucoredev_shmfd *ucshm;
@@ -247,8 +259,10 @@ coredump_ucoredev(struct thread *td, off_t limit)
 
 	uctx.shmfd = shm;
 	uctx.corepos = corepos;
+	uctx.compression = -1;
 
 	cdw.ctx = &uctx;
+	cdw.init_fn = coredump_shminit;
 	cdw.write_fn = coredump_shmwrite;
 	cdw.extend_fn = coredump_shmextend;
 
@@ -268,6 +282,22 @@ coredump_ucoredev(struct thread *td, off_t limit)
 	 * dump without it.
 	 */
 	datasz = sizeof(uc);
+
+	switch (uctx.compression) {
+	case 0:
+		uc.ucore_compression = UCOMP_NONE;
+		break;
+	case COMPRESS_GZIP:
+		uc.ucore_compression = UCOMP_GZIP;
+		break;
+	case COMPRESS_ZSTD:
+		uc.ucore_compression = UCOMP_ZSTD;
+		break;
+	default:
+		uc.ucore_compression = UCOMP_UNKNOWN;
+		break;
+	}
+
 	uc.ucore_size = shm->shm_size - uctx.corepos;
 	error = do_write(shm, 0, &uc, &datasz, UIO_SYSSPACE, td);
 	if (error != 0) {
