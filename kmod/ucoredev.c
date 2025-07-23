@@ -21,6 +21,7 @@
 #include <sys/module.h>
 #include <sys/mutex.h>
 #include <sys/poll.h>
+#include <sys/priv.h>
 #include <sys/proc.h>
 #include <sys/resourcevar.h>
 #include <sys/sched.h>
@@ -41,13 +42,11 @@ static d_read_t ucoredev_read;
 static d_ioctl_t ucoredev_ioctl;
 static d_poll_t ucoredev_poll;
 static d_kqfilter_t ucoredev_kqfilter;
-static d_close_t ucoredev_close;
 
 static struct cdev *ucore_dev;
 static struct cdevsw ucore_cdevsw = {
 	.d_version =	D_VERSION,
 	.d_open =	ucoredev_open,
-	.d_close =	ucoredev_close,
 	.d_read =	ucoredev_read,
 	.d_ioctl =	ucoredev_ioctl,
 	.d_poll =	ucoredev_poll,
@@ -66,7 +65,24 @@ struct coredump_ucore_ctx {
 	off_t				 corepos;
 };
 
-struct selinfo ucoredev_sel;
+static struct ucoredev_softc {
+	STAILQ_HEAD(, ucoredev_shmfd)	ucores;
+	struct mtx			mtx;
+	struct selinfo			sel;
+	size_t				ucoresz;
+	int				flags;
+} usoftc;
+
+#define	USOFTC_OPENED		0x0001
+#define	USOFTC_UNLOADING	0x0002
+
+MTX_SYSINIT(ucorelock, &usoftc.mtx, "ucore list lock", MTX_DEF);
+
+#define	UCORE_LOCK()	mtx_lock(&usoftc.mtx)
+#define	UCORE_UNLOCK()	mtx_unlock(&usoftc.mtx)
+#define	UCORE_LOCK_ASSERT()	mtx_assert(&usoftc.mtx, MA_OWNED)
+
+
 static int ucoredev_kqread(struct knote *kn, long hint);
 static void ucoredev_kqdetach(struct knote *kn);
 
@@ -90,22 +106,41 @@ struct coredumper ucoredev_coredumper = {
 
 static MALLOC_DEFINE(M_UCORE, "ucorebufs", "ucore descriptor buffers");
 
-static STAILQ_HEAD(, ucoredev_shmfd) ucores = STAILQ_HEAD_INITIALIZER(ucores);
-static size_t ucoresz;
-
-static struct mtx ucoredev_mtx;
-MTX_SYSINIT(ucorelock, &ucoredev_mtx, "ucore list lock", MTX_DEF);
-
-#define	UCORE_LOCK()	mtx_lock(&ucoredev_mtx)
-#define	UCORE_UNLOCK()	mtx_unlock(&ucoredev_mtx)
-#define	UCORE_LOCK_ASSERT()	mtx_assert(&ucoredev_mtx, MA_OWNED)
-
 static void ucoredev_shmfd_free(struct ucoredev_shmfd *);
+
+static void
+ucoredevdtor(void *data)
+{
+
+	knlist_clear(&usoftc.sel.si_note, 0);
+	seldrain(&usoftc.sel);
+	knlist_destroy(&usoftc.sel.si_note);
+
+	UCORE_LOCK();
+	usoftc.flags &= ~USOFTC_OPENED;
+	UCORE_UNLOCK();
+}
 
 static int
 ucoredev_open(struct cdev *dev, int flags, int mode, struct thread *td)
 {
-	/* XXX Only single open() */
+	int error;
+
+	if ((error = priv_check(td, PRIV_KLD_LOAD)) != 0)
+		return (error);
+
+	UCORE_LOCK();
+	if ((usoftc.flags & (USOFTC_OPENED | USOFTC_UNLOADING)) != 0) {
+		UCORE_UNLOCK();
+		return (EBUSY);
+	}
+
+	usoftc.flags |= USOFTC_OPENED;
+	knlist_init_mtx(&usoftc.sel.si_note, &usoftc.mtx);
+	UCORE_UNLOCK();
+
+	devfs_set_cdevpriv(&usoftc, ucoredevdtor);
+
 	return (0);
 }
 
@@ -118,23 +153,23 @@ ucoredev_read(struct cdev *dev __unused, struct uio *uio, int flags __unused)
 	int error = 0, fd;
 
 	UCORE_LOCK();
-	if (STAILQ_EMPTY(&ucores)) {	/* XXX */
+	if (STAILQ_EMPTY(&usoftc.ucores)) {	/* XXX */
 		UCORE_UNLOCK();
 		return (EWOULDBLOCK);
 	}
 
 	while (error == 0 && uio->uio_resid > 0) {
-		next = STAILQ_FIRST(&ucores);
-		STAILQ_REMOVE_HEAD(&ucores, entry);
-		ucoresz--;
+		next = STAILQ_FIRST(&usoftc.ucores);
+		STAILQ_REMOVE_HEAD(&usoftc.ucores, entry);
+		usoftc.ucoresz--;
 		UCORE_UNLOCK();
 
 		error = kern_shm_open2(td, SHM_ANON, O_RDONLY, 0400, 0, NULL,
 		    NULL, next->shmfd);
 		if (error != 0) {
 			UCORE_LOCK();
-			STAILQ_INSERT_HEAD(&ucores, next, entry);
-			ucoresz++;
+			STAILQ_INSERT_HEAD(&usoftc.ucores, next, entry);
+			usoftc.ucoresz++;
 
 			/*
 			 * If we managed to tap out *any* cores, then we'll call
@@ -160,8 +195,8 @@ ucoredev_read(struct cdev *dev __unused, struct uio *uio, int flags __unused)
 		if (error != 0) {
 			(void)kern_close(td, fd);
 			UCORE_LOCK();
-			ucoresz++;
-			STAILQ_INSERT_HEAD(&ucores, next, entry);
+			usoftc.ucoresz++;
+			STAILQ_INSERT_HEAD(&usoftc.ucores, next, entry);
 			break;
 		}
 
@@ -182,7 +217,7 @@ static size_t
 ucoredev_cores_available(uintmax_t type_max)
 {
 	UCORE_LOCK_ASSERT();
-	return (MIN(type_max / sizeof(int), ucoresz));
+	return (MIN(type_max / sizeof(int), usoftc.ucoresz));
 }
 
 static int
@@ -203,14 +238,6 @@ ucoredev_ioctl(struct cdev *dev __unused, u_long cmd, caddr_t data,
 }
 
 static int
-ucoredev_close(struct cdev *dev __unused, int flag __unused, int mode __unused,
-    struct thread *td __unused)
-{
-	/* XXX */
-	return (0);
-}
-
-static int
 ucoredev_poll(struct cdev *dev, int events, struct thread *td)
 {
 	int revents = 0;
@@ -218,10 +245,10 @@ ucoredev_poll(struct cdev *dev, int events, struct thread *td)
 	/* We only support reading from /dev/ucore. */
 	if ((events & (POLLIN | POLLRDNORM)) != 0) {
 		UCORE_LOCK();
-		if (ucoresz != 0)
+		if (usoftc.ucoresz != 0)
 			revents = events & (POLLIN | POLLRDNORM);
 		else
-			selrecord(td, &ucoredev_sel);
+			selrecord(td, &usoftc.sel);
 		UCORE_UNLOCK();
 	}
 
@@ -238,7 +265,7 @@ ucoredev_kqfilter(struct cdev *dev, struct knote *kn)
 	kn->kn_hook = NULL;
 
 	UCORE_LOCK();
-	knlist_add(&ucoredev_sel.si_note, kn, 1);
+	knlist_add(&usoftc.sel.si_note, kn, 1);
 	UCORE_UNLOCK();
 	return (0);
 }
@@ -255,7 +282,7 @@ static void
 ucoredev_kqdetach(struct knote *kn)
 {
 	UCORE_LOCK();
-	knlist_remove(&ucoredev_sel.si_note, kn, 1);
+	knlist_remove(&usoftc.sel.si_note, kn, 1);
 	UCORE_UNLOCK();
 }
 
@@ -481,7 +508,6 @@ coredump_ucoredev(struct thread *td, off_t limit)
 	 */
 	datasz = sizeof(uc);
 	uc.ucore_size = shm->shm_size - uctx.corepos;
-	uprintf("Recorded size: %zu\n", uc.ucore_size);
 	error = do_write(shm, 0, &uc, &datasz, UIO_SYSSPACE, td);
 	if (error != 0) {
 		shm_drop(shm);
@@ -494,11 +520,11 @@ coredump_ucoredev(struct thread *td, off_t limit)
 	ucshm->shmfd = shm;
 
 	UCORE_LOCK();
-	STAILQ_INSERT_TAIL(&ucores, ucshm, entry);
-	ucoresz++;
+	STAILQ_INSERT_TAIL(&usoftc.ucores, ucshm, entry);
+	usoftc.ucoresz++;
 
-	KNOTE_LOCKED(&ucoredev_sel.si_note, 0);
-	selwakeup(&ucoredev_sel);
+	KNOTE_LOCKED(&usoftc.sel.si_note, 0);
+	selwakeup(&usoftc.sel);
 	UCORE_UNLOCK();
 
 	return (error);
@@ -509,32 +535,39 @@ ucoredev_modevent(module_t mod __unused, int type, void *data __unused)
 {
 	switch(type) {
 	case MOD_LOAD:
-		knlist_init_mtx(&ucoredev_sel.si_note, &ucoredev_mtx);
+		STAILQ_INIT(&usoftc.ucores);
 		ucore_dev = make_dev_credf(MAKEDEV_ETERNAL_KLD, &ucore_cdevsw,
 		    0, NULL, UID_ROOT, GID_WHEEL, 0400, "ucore");
 		coredumper_register(&ucoredev_coredumper);
 		break;
 
 	case MOD_UNLOAD:
-		/* XXX Return EBUSY if the device is open. */
+		UCORE_LOCK();
+		if ((usoftc.flags & USOFTC_OPENED) != 0) {
+			UCORE_UNLOCK();
+
+			return (EBUSY);
+		}
+
+		/* Block further opens until the device is destroyed. */
+		usoftc.flags |= USOFTC_UNLOADING;
+		UCORE_UNLOCK();
+
 		destroy_dev(ucore_dev);
-		knlist_clear(&ucoredev_sel.si_note, 0);
-		seldrain(&ucoredev_sel);
-		knlist_destroy(&ucoredev_sel.si_note);
 		coredumper_unregister(&ucoredev_coredumper);
 
 		UCORE_LOCK();
-		while (!STAILQ_EMPTY(&ucores)) {
+		while (!STAILQ_EMPTY(&usoftc.ucores)) {
 			struct ucoredev_shmfd *ucs;
 
-			ucs = STAILQ_FIRST(&ucores);
-			STAILQ_REMOVE_HEAD(&ucores, entry);
+			ucs = STAILQ_FIRST(&usoftc.ucores);
+			STAILQ_REMOVE_HEAD(&usoftc.ucores, entry);
 
 			ucoredev_shmfd_free(ucs);
-			ucoresz--;
+			usoftc.ucoresz--;
 		}
 
-		MPASS(ucoresz == 0);
+		MPASS(usoftc.ucoresz == 0);
 		UCORE_UNLOCK();
 		return (0);
 
