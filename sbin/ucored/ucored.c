@@ -258,7 +258,7 @@ main(int argc, char *argv[])
 		/*
 		 * XXX Should the socket and device be mutually exclusive?
 		 */
-		if (libucore_dev_available()) {
+		if (libucore_dev_available(true)) {
 			udev = libucore_dev_open(ucored_lua_handle);
 			if (udev == NULL) {
 				libucore_log(LOG_ERR, "failed to open /dev/ucore");

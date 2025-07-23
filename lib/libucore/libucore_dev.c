@@ -7,10 +7,13 @@
 #include <sys/param.h>
 #include <sys/conf.h>
 #include <sys/ioctl.h>
+#include <sys/linker.h>
 #include <sys/mman.h>
+#include <sys/module.h>
 #include <sys/stat.h>
 
 #include <assert.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <stdlib.h>
@@ -51,10 +54,25 @@ static struct ucore_dev_core *libucore_dev_core_decode(int);
 #endif
 
 bool
-libucore_dev_available(void)
+libucore_dev_available(bool loadit)
 {
 	struct stat sb;
 
+	if (modfind("ucoredev") == -1) {
+		/*
+		 * Some callers, like ucored(8), may want to go ahead and let us
+		 * load it because it was clearly intended to be used.
+		 */
+		if (errno != ENOENT || !loadit)
+			return (false);
+		if (kldload("ucoredev") == -1)
+			return (false);
+	}
+
+	/*
+	 * We still want to do a basic sanity check of the device we're about
+	 * to open, though.
+	 */
 	if (stat(_PATH_DEVUCORE, &sb) == -1)
 		return (false);
 	return (S_ISCHR(sb.st_mode));

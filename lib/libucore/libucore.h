@@ -52,7 +52,7 @@ typedef bool ucore_handle_fn(struct ucore_provider *);
 bool libucore_send_data(int fd, const void *payload, size_t payloadsz);
 bool libucore_read_data(int fd, void *payload, size_t payloadsz);
 
-bool libucore_dev_available(void);
+bool libucore_dev_available(bool);
 struct ucore_dev *libucore_dev_open(ucore_handle_fn *);
 struct ucore_readable *libucore_dev_readable(struct ucore_dev *);
 void libucore_dev_close(struct ucore_dev *);
