@@ -446,7 +446,7 @@ ucored_ucore_filename(lua_State *L)
 static int
 ucored_ucore_move(lua_State *L)
 {
-	struct stat sb;
+	struct stat sb_to;
 	struct timespec ts[2];
 	struct luaucore *self;
 	const struct ucore *hdr;
@@ -474,7 +474,7 @@ ucored_ucore_move(lua_State *L)
 	 * Note that we won't have a path if the core came in via /dev/ucore, so
 	 * all we can do there is copy the core out.
 	 */
-	if (lstat(path, &sb) == -1 && errno == ENOENT && corepath != NULL) {
+	if (lstat(path, &sb_to) == -1 && errno == ENOENT && corepath != NULL) {
 		/*
 		 * Attempt to rename first; maybe we'll get lucky.
 		 */
@@ -540,15 +540,15 @@ ucored_ucore_move(lua_State *L)
 		 * to be a good citizen and avoid clobbering someone else's
 		 * core -- otherwise, we'd just blindly unlink it before.
 		 */
-		if (lstat(path, &sb) == -1)
+		if (lstat(path, &sb_to) == -1)
 			goto err;
 
-		if (S_ISLNK(sb.st_mode)) {
+		if (S_ISLNK(sb_to.st_mode)) {
 			luaL_pushfail(L);
 			lua_pushstring(L,
 			    "security: refusing to follow destination symlink");
 			return (2);
-		} else if (sb.st_uid != uid) {
+		} else if (sb_to.st_uid != uid) {
 			luaL_pushfail(L);
 			lua_pushstring(L,
 			    "security: refusing to clobber another user's core");
@@ -564,7 +564,7 @@ ucored_ucore_move(lua_State *L)
 		 * trying to pull something.
 		 */
 		tofd = open(path, O_WRONLY | O_NOFOLLOW | O_CREAT | O_EXCL,
-		    sb.st_mode);
+		    sb_to.st_mode & ACCESSPERMS);
 	}
 
 	if (tofd == -1)
