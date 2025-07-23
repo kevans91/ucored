@@ -20,18 +20,33 @@ end
 
 local function replace_symbols(ucore, path)
 	local attrs = ucore:attributes()
+
+	-- If we want the replacement value to come from a function, then we
+	-- want to avoid calling it up-front; just refer to the function here,
+	-- and let the loop below lazily resolve the value if one of them was
+	-- actually specified.
+	--
+	-- Any functions here should take a single argument, the ucore that we
+	-- are examining.
 	local symbols = {
-		["%d"] = ucore:domainname(),
-		["%h"] = ucore:hostname(),
+		["%d"] = ucore.domainname,
+		["%h"] = ucore.hostname,
 		["%j"] = attrs.jid,
-		["%n"] = ucore:filename(),
+		["%n"] = ucore.filename,
 		["%P"] = attrs.ppid,
 		["%p"] = attrs.pid,
 		["%s"] = attrs.signal,
 	}
 
 	for sym, val in pairs(symbols) do
-		path = path:gsub("%" .. sym, tostring(val))
+		local symesc = "%" .. sym
+		if path:find(symesc) then
+			if type(val) == "function" then
+				val = val(ucore)
+			end
+
+			path = path:gsub(symesc, tostring(val))
+		end
 	end
 
 	return path
