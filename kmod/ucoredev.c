@@ -28,6 +28,16 @@
 
 #include "ucoredev.h"
 
+/*
+ * Ideally we would have our own reservation, but this is fine.  We specifically
+ * do not want a privilege that would be granted to a jail, because we do not
+ * do any per-jail filtering here.  Maybe attaching ucore queues to jails with
+ * OSDs would be a neat idea, then we allow jailed root to open ucoredev and
+ * grab cores for its descendants.  For now, though, only allow unjailed root
+ * the honor.
+ */
+#define	PRIV_UCOREDEV	PRIV_MODULE0
+
 static d_open_t ucoredev_open;
 static d_read_t ucoredev_read;
 static d_ioctl_t ucoredev_ioctl;
@@ -95,7 +105,7 @@ ucoredev_open(struct cdev *dev, int flags, int mode, struct thread *td)
 {
 	int error;
 
-	if ((error = priv_check(td, PRIV_KLD_LOAD)) != 0)
+	if ((error = priv_check(td, PRIV_UCOREDEV)) != 0)
 		return (error);
 
 	UCORE_LOCK();
