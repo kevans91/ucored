@@ -7,6 +7,7 @@
 #pragma once
 
 #include <sys/types.h>
+#include <sys/queue.h>
 
 #define	UCORE_MAGIC	"UCORE0"
 
@@ -65,3 +66,17 @@ struct ucore_data {
 	 */
 	_Alignas(__max_align_t) uint8_t	ud_data[];
 };
+
+#ifdef _KERNEL
+struct ucoredev_shmfd {
+	STAILQ_ENTRY(ucoredev_shmfd)	entry;
+
+	struct shmfd			*shmfd;
+};
+
+MALLOC_DECLARE(M_UCORE);
+
+extern struct coredumper ucoredev_coredumper;
+
+void ucoredev_enqueue(struct ucoredev_shmfd *);
+#endif
