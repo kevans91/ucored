@@ -41,6 +41,7 @@
 /* Just a light wrapper for our ucore. */
 struct luaucore {
 	struct ucore_provider	*up;
+	char			*curpath;
 };
 
 enum ucore_uvalues {
@@ -451,6 +452,24 @@ ucored_ucore_filename(lua_State *L)
 }
 
 static int
+ucored_open_core(struct luaucore *self)
+{
+	struct ucore_provider *up = self->up;
+	int fd;
+
+	/*
+	 * Once the core has been moved, we *know* we can just open(2) it as
+	 * usual rather than taking a trip through the provider.
+	 */
+	if (self->curpath != NULL)
+		fd = open(self->curpath, O_RDONLY | O_NOFOLLOW);
+	else
+		fd = (*up->p_open_core)(up);
+
+	return (fd);
+}
+
+static int
 ucored_ucore_move(lua_State *L)
 {
 	struct stat sb_to;
@@ -459,6 +478,7 @@ ucored_ucore_move(lua_State *L)
 	const struct ucore *hdr;
 	struct ucore_provider *up;
 	const char *corepath, *path;
+	char *newpath = NULL;
 	off_t coresize;
 	int fromfd, serrno, tofd;
 	fflags_t fflags;
@@ -467,7 +487,10 @@ ucored_ucore_move(lua_State *L)
 
 	fromfd = tofd = -1;
 	self = luaL_checkudata(L, 1, UCORED_UCOREHANDLE);
-	corepath = (const char *)ucored_ucore_strfetch_value(self, UDT_PATH);
+	if (self->curpath != NULL)
+		corepath = self->curpath;
+	else
+		corepath = (const char *)ucored_ucore_strfetch_value(self, UDT_PATH);
 	path = luaL_checkstring(L, 2);
 
 	up = self->up;
@@ -498,7 +521,7 @@ ucored_ucore_move(lua_State *L)
 	 * for rename(2), we'll set it up for copy_file_range(2) + unlink(2)
 	 * instead.
 	 */
-	fromfd = (*up->p_open_core)(up);
+	fromfd = ucored_open_core(self);
 	if (fromfd == -1) {
 		/*
 		 * Symlinks are all kinds of security issues, so we'll always
@@ -588,8 +611,26 @@ ucored_ucore_move(lua_State *L)
 	if (fflags != 0 && fchflags(tofd, fflags) == -1)
 		goto err;
 
-	if (!ucored_copy_file(fromfd, tofd, coresize))
+	newpath = strdup(path);
+	if (newpath == NULL) {
+		serrno = errno;
 		goto err;
+	}
+
+	if (!ucored_copy_file(fromfd, tofd, coresize)) {
+		free(newpath);
+		goto err;
+	}
+
+	/*
+	 * We don't need the old one laying around anymore, so go ahead and
+	 * unlink it.
+	 */
+	if (corepath != NULL)
+		(void)unlink(corepath);
+
+	free(self->curpath);
+	self->curpath = newpath;
 
 	lua_pushboolean(L, 1);
 	return (1);
@@ -612,6 +653,11 @@ ucored_ucore_path(lua_State *L)
 	struct luaucore *self;
 
 	self = luaL_checkudata(L, 1, UCORED_UCOREHANDLE);
+	if (self->curpath != NULL) {
+		lua_pushstring(L, self->curpath);
+		return (1);
+	}
+
 	return (ucored_ucore_strfetch(L, self, UDT_PATH, NULL));
 }
 
@@ -679,9 +725,12 @@ ucored_ucore_pipe(lua_State *L)
 	pid_t childpid, wpid;
 
 	self = luaL_checkudata(L, 1, UCORED_UCOREHANDLE);
-	corepath = (const char *)ucored_ucore_strfetch_value(self, UDT_PATH);
-	assert(corepath != NULL);	/* XXX */
-
+	if (self->curpath != NULL) {
+		corepath = self->curpath;
+	} else {
+		corepath = (const char *)ucored_ucore_strfetch_value(self,
+		    UDT_PATH);
+	}
 	argc = lua_gettop(L) - 1;
 	if (argc == 0) {
 		luaL_pushfail(L);
@@ -689,7 +738,7 @@ ucored_ucore_pipe(lua_State *L)
 		return (2);
 	}
 
-	corefd = (*self->up->p_open_core)(self->up);
+	corefd = ucored_open_core(self);
 	if (corefd == -1) {
 		int serrno = errno;
 
@@ -850,6 +899,8 @@ ucored_lua_push_ucore(struct ucore_provider *up)
 	/* Setup our ucore arg. */
 	lucore = lua_newuserdatauv(ucored_state, sizeof(*lucore), UCV_NVALS - 1);
 	luaL_setmetatable(ucored_state, UCORED_UCOREHANDLE);
+
+	memset(lucore, 0, sizeof(*lucore));
 	lucore->up = up;
 
 	/* UCV_ATTRS */
