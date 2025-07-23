@@ -21,6 +21,12 @@ end
 local function replace_symbols(ucore, path)
 	local attrs = ucore:attributes()
 
+	local function pname(ucore)
+		local comm = ucore:comm()
+
+		return filename_part(comm)
+	end
+
 	-- If we want the replacement value to come from a function, then we
 	-- want to avoid calling it up-front; just refer to the function here,
 	-- and let the loop below lazily resolve the value if one of them was
@@ -32,7 +38,7 @@ local function replace_symbols(ucore, path)
 		["%d"] = ucore.domainname,
 		["%h"] = ucore.hostname,
 		["%j"] = attrs.jid,
-		["%n"] = ucore.filename,
+		["%n"] = pname,
 		["%P"] = attrs.ppid,
 		["%p"] = attrs.pid,
 		["%s"] = attrs.signal,
