@@ -24,6 +24,7 @@
 #include <sys/syscallsubr.h>
 #include <sys/ucoredump.h>
 #include <sys/uio.h>
+#include <sys/vnode.h>
 
 #include "ucoredev.h"
 
@@ -47,6 +48,7 @@ static struct cdevsw ucore_cdevsw = {
 static struct ucoredev_softc {
 	STAILQ_HEAD(, ucoredev_shmfd)	ucores;
 	struct mtx			mtx;
+	struct cv			wakeup;
 	struct selinfo			sel;
 	size_t				ucoresz;
 	int				flags;
@@ -112,7 +114,7 @@ ucoredev_open(struct cdev *dev, int flags, int mode, struct thread *td)
 }
 
 static int
-ucoredev_read(struct cdev *dev __unused, struct uio *uio, int flags __unused)
+ucoredev_read(struct cdev *dev __unused, struct uio *uio, int flags)
 {
 	struct ucoredev_shmfd *next;
 	struct thread *td = curthread;
@@ -120,12 +122,22 @@ ucoredev_read(struct cdev *dev __unused, struct uio *uio, int flags __unused)
 	int error = 0, fd;
 
 	UCORE_LOCK();
-	if (STAILQ_EMPTY(&usoftc.ucores)) {	/* XXX */
-		UCORE_UNLOCK();
-		return (EWOULDBLOCK);
-	}
-
 	while (error == 0 && uio->uio_resid > 0) {
+		if (STAILQ_EMPTY(&usoftc.ucores)) {
+			if ((flags & IO_NDELAY) != 0) {
+				UCORE_UNLOCK();
+				return (EWOULDBLOCK);
+			}
+
+			error = cv_wait_sig(&usoftc.wakeup, &usoftc.mtx);
+			if (error != 0) {
+				UCORE_UNLOCK();
+				return (error);
+			}
+
+			continue;
+		}
+
 		next = STAILQ_FIRST(&usoftc.ucores);
 		STAILQ_REMOVE_HEAD(&usoftc.ucores, entry);
 		usoftc.ucoresz--;
@@ -270,6 +282,7 @@ ucoredev_enqueue(struct ucoredev_shmfd *ucshm)
 
 	KNOTE_LOCKED(&usoftc.sel.si_note, 0);
 	selwakeup(&usoftc.sel);
+	cv_broadcast(&usoftc.wakeup);
 	UCORE_UNLOCK();
 }
 
@@ -279,6 +292,7 @@ ucoredev_modevent(module_t mod __unused, int type, void *data __unused)
 	switch(type) {
 	case MOD_LOAD:
 		STAILQ_INIT(&usoftc.ucores);
+		cv_init(&usoftc.wakeup, "ucores");
 		ucore_dev = make_dev_credf(MAKEDEV_ETERNAL_KLD, &ucore_cdevsw,
 		    0, NULL, UID_ROOT, GID_WHEEL, 0400, "ucore");
 		coredumper_register(&ucoredev_coredumper);
@@ -298,6 +312,7 @@ ucoredev_modevent(module_t mod __unused, int type, void *data __unused)
 
 		destroy_dev(ucore_dev);
 		coredumper_unregister(&ucoredev_coredumper);
+		cv_destroy(&usoftc.wakeup);
 
 		UCORE_LOCK();
 		while (!STAILQ_EMPTY(&usoftc.ucores)) {
