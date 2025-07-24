@@ -13,6 +13,7 @@
 #include <fcntl.h>
 #include <regex.h>
 #include <spawn.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -773,6 +774,7 @@ ucored_ucore_pipe(lua_State *L)
 	const char *corepath, *errstr = NULL;
 	int argc, corefd = -1, status;
 	pid_t childpid, wpid;
+	struct sigaction osa, sa = { .sa_handler = SIG_DFL };
 
 	self = luaL_checkudata(L, 1, UCORED_UCOREHANDLE);
 	if (self->curpath != NULL) {
@@ -825,6 +827,14 @@ ucored_ucore_pipe(lua_State *L)
 		}
 	}
 
+	/*
+	 * Install our new signal handler before we spawn the child to avoid
+	 * losing the notification.  We'll drain any zombies we might have had
+	 * after when we return to the event loop if we are in an exceptional
+	 * situation and handling the core straight out of the ucored(8)
+	 * process.
+	 */
+	(void)sigaction(SIGCHLD, &sa, &osa);
 	if (ucored_spawn_pipe(&childpid, corefd, __DECONST(char *const *, argv),
 	    &errstr) == -1) {
 		close(corefd);
@@ -843,6 +853,9 @@ ucored_ucore_pipe(lua_State *L)
 		lua_pushfstring(L, "waitpid: %s", strerror(serrno));
 		return (2);
 	}
+
+	(void)sigaction(SIGCHLD, &osa, NULL);
+	ucored_checkpwait = 1;
 
 	if (!WIFEXITED(status)) {
 		luaL_pushfail(L);

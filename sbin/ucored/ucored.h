@@ -30,6 +30,7 @@ struct ucored_client_data {
 struct ucored_client;
 
 /* ucored.c */
+extern sig_atomic_t ucored_checkpwait;
 extern sig_atomic_t ucored_terminate;
 
 void ucored_now(struct timespec *);

@@ -49,18 +49,25 @@ struct ucored_server {
 static int ucored_loop(int);
 static bool ucored_accept(struct ucore_readable *, size_t, bool);
 
+sig_atomic_t ucored_checkpwait;
 sig_atomic_t ucored_terminate;
+
+static void
+handle_sigchld(int signo __unused)
+{
+	ucored_checkpwait = 1;
+	atomic_signal_fence(memory_order_release);
+}
 
 static void
 handle_termsig(int signo __unused)
 {
-
 	ucored_terminate = 1;
 	atomic_signal_fence(memory_order_release);
 }
 
 static void
-handle_sigchld(int signo __unused)
+ucored_drain_zombies(void)
 {
 	pid_t wpid;
 	int status;
@@ -75,9 +82,6 @@ handle_sigchld(int signo __unused)
 			__assert_unreachable();
 		}
 
-		/*
-		 * None of this async-signal-safe.  Whoops.
-		 */
 		if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
 			libucore_log(LOG_NOTICE,
 			    "Child %d terminated abnormally (status=%x)",
@@ -423,6 +427,12 @@ ucored_loop(int kq)
 
 	for (;;) {
 		atomic_signal_fence(memory_order_acquire);
+
+		if (ucored_checkpwait) {
+			ucored_drain_zombies();
+			ucored_checkpwait = 0;
+		}
+
 		if (ucored_terminate)
 			break;
 
