@@ -255,8 +255,13 @@ ucored_client_send_ack(struct ucored_client *cl, int status)
 		libucore_log(LOG_ERR, "Failed to ack with status=%d", status);
 }
 
+/*
+ * Our ucored_client takes description over the socket and leaves the data in
+ * a file on-disk, which is what we open here.  Thus, the 'dataonly' hint is not
+ * necessary because we will always only open the data-bits.
+ */
 static int
-ucored_client_open_core(const struct ucore_provider *up)
+ucored_client_open_core(const struct ucore_provider *up, bool dataonly __unused)
 {
 	const struct ucore_data *sd;
 	const char *corepath;

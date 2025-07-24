@@ -581,7 +581,7 @@ ucored_ucore_filename(lua_State *L)
 }
 
 static int
-ucored_open_core(struct luaucore *self)
+ucored_open_core(struct luaucore *self, bool dataonly)
 {
 	struct ucore_provider *up = self->up;
 	int fd;
@@ -593,7 +593,7 @@ ucored_open_core(struct luaucore *self)
 	if (self->curpath != NULL)
 		fd = open(self->curpath, O_RDONLY | O_NOFOLLOW);
 	else
-		fd = (*up->p_open_core)(up);
+		fd = (*up->p_open_core)(up, dataonly);
 
 	return (fd);
 }
@@ -661,9 +661,11 @@ ucored_ucore_move(lua_State *L)
 	/*
 	 * If the problem is just that it's a cross-fs copy that is ineligible
 	 * for rename(2), we'll set it up for copy_file_range(2) + unlink(2)
-	 * instead.
+	 * instead.  We don't request a data-only core because we know well
+	 * enough to operate based on the current position; the extra copy that
+	 * might be needed to get a data-only core isn't worth it.
 	 */
-	fromfd = ucored_open_core(self);
+	fromfd = ucored_open_core(self, false);
 	if (fromfd == -1) {
 		/*
 		 * Symlinks are all kinds of security issues, so we'll always
@@ -891,7 +893,7 @@ ucored_ucore_pipe(lua_State *L)
 		return (2);
 	}
 
-	corefd = ucored_open_core(self);
+	corefd = ucored_open_core(self, true);
 	if (corefd == -1) {
 		int serrno = errno;
 

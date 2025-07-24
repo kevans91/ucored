@@ -218,20 +218,43 @@ libucore_dev_core_fetch_header(const struct ucore_provider *up)
 }
 
 static int
-libucore_dev_core_open_core(const struct ucore_provider *up)
+libucore_dev_core_open_core(const struct ucore_provider *up, bool dataonly)
 {
 	struct ucore_dev_core *core = UCORE_DEV_CORE_FROM(up);
-	int nfd;
+	int fd;
 
-	nfd = dup(core->core_fd);
-	if (nfd == -1) {
-		libucore_log(LOG_ERR, "dup: %m");
+	/*
+	 * If we're not looking for a data-only file, then we can just dup our
+	 * shmfd and hand that off to the caller.
+	 */
+	if (!dataonly) {
+		fd = dup(core->core_fd);
+		if (fd == -1) {
+			libucore_log(LOG_ERR, "dup: %m");
+			return (-1);
+		}
+
+		/* Reset position in case we re-opened it. */
+		(void)lseek(fd, core->core_datapos, SEEK_SET);
+		return (fd);
+	}
+
+	fd = memfd_create("ucoredev", 0);
+	if (fd == -1) {
+		libucore_log(LOG_ERR, "memfd_create: %m");
 		return (-1);
 	}
 
 	/* Reset position in case we re-opened it. */
-	(void)lseek(nfd, core->core_datapos, SEEK_SET);
-	return (nfd);
+	(void)lseek(core->core_fd, core->core_datapos, SEEK_SET);
+	if (!libucore_copy_file(core->core_fd, fd, core->core_datasz)) {
+		libucore_log(LOG_ERR, "failed to materialize new memfd: %m");
+		close(fd);
+		return (-1);
+	}
+
+	(void)lseek(fd, 0, SEEK_SET);
+	return (fd);
 }
 
 static void

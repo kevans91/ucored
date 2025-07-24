@@ -24,7 +24,7 @@ typedef const struct ucore_data *
 typedef const struct ucore *
     ucore_fetch_header_fn(const struct ucore_provider *);
 /* Returns an fd for the core belonging to this provider, or -1 on error. */
-typedef int ucore_open_core_fn(const struct ucore_provider *);
+typedef int ucore_open_core_fn(const struct ucore_provider *, bool);
 
 struct ucore_provider {
 	ucore_fetch_data_fn	*p_fetch_data;
