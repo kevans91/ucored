@@ -49,6 +49,7 @@ local function replace_symbols(ucore, path)
 	-- %I is reserved for indexing, which is applied later.
 	local symbols = {
 		["%d"] = ucore.domainname,
+		["%f"] = ucore.path,
 		["%h"] = ucore.hostname,
 		["%j"] = attrs.jid,
 		["%n"] = pname,
