@@ -4,6 +4,7 @@ SUBDIR+=	lib
 SUBDIR+=	.WAIT
 
 SUBDIR+=	devd
+SUBDIR+=	examples
 SUBDIR+=	libexec
 SUBDIR+=	rc.d
 SUBDIR+=	sbin

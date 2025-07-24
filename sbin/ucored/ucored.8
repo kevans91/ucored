@@ -228,8 +228,6 @@ The signal that triggered the coredump.
 .It Dq \&%u
 The uid of the process credentials.
 .El
-.Ss Configuration
-Not yet.
 .Ss ucore Objects
 When information about a coredump has been received,
 .Nm
@@ -338,7 +336,66 @@ will also refuse to move it.
 .It Dv ucore:path()
 The full path to the coredump.
 .El
+.Ss Configuration
+.Nm
+is configured with UCL using
+.Xr libucl 3 .
+Its configuration, by default, is located at
+.Pa /usr/local/etc/ucored.conf .
+.Pp
+The top-level object in the configuration is expected to have a
+.Dq filters
+key whose value is one or more filter objects.
+Either a single object or an array of object(s) is accepted.
+.Pp
+Each filter object may have three keys:
+.Bl -tag -width indent
+.It Dv name
+Optional.
+A name to be used for reference in errors related to the filter.
+If a name is not specified, then the index into hte filters array will be used
+instead.
+.It Dv match
+Required.
+An object whose keys describe fields to match on, and whose values contain
+POSIX Extended Regular Expressions to match against.
+All fields that are specified are tested, and a rule is only selected if all of
+the specified expressions match.
+The first rule to match will handle the corefile.
+.Pp
+The following fields are valid for matching against:
+.Bl -tag -width indent
+.It Dv comm
+The command that was executed.
+The comm field is the full path to the command when it's available.
+.It Dv domainname
+The domainname from the process' jail or the host, as applicable.
+.It Dv hostname
+The hostname from the process' jail or the host, as applicable.
+.It Dv jail
+The jail name from the process' jail if it was jailed, or the empty string if
+it was not.
+.It Dv path
+The original path of the corefile.
+For cores that were dumped through
+.Xr ucoredev 4 ,
+the path will be empty.
+.El
+.It Dv execute
+Required.
+One or more actions to execute against the core.
+Either a single object or an array of object(s) is accepted.
+.Pp
+Each action object has a required key,
+.Dv type ,
+to name the action to execute.
+The valid action types and the required arguments are described above in
+.Sx Policies .
+The named arguments are expected to be provided as a key in the same
+object.
+.El
 .Sh FILES
+.Pa /usr/local/etc/ucored.conf ,
 .Pa /var/run/ucored.sock ,
 .Pa /var/ucrash
 .Sh EXIT STATUS
@@ -352,7 +409,7 @@ utility exits 1 if an error occurs in startup.
 .Xr unlink 2 ,
 .Xr pidfile 3 ,
 .Xr signal 3 ,
-.Xr ucoredev 8 ,
+.Xr ucoredev 4 ,
 .Xr devd 8 ,
 .Xr inetd 8 ,
 .Xr sysctl 8
