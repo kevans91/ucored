@@ -170,11 +170,15 @@ local function process_destpath(ucore, path, limit)
 		assert(path, "Failed to resolve indexed destpath " .. opath)
 	end
 
+	-- We'll slap a compression suffix on it if we need to, but if we're
+	-- moving it from some other path and not from a shmfd it may already
+	-- have the correct suffix.
 	local attrs = ucore:attributes()
 	local suffix = compression_suffix_map[attrs.compression]
-	if suffix then
+	if suffix and not path:find("%" .. suffix .. "$") then
 		path = path .. suffix
 	end
+
 	return path
 end
 
