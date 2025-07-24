@@ -55,6 +55,8 @@ enum ucore_uvalues {
 #define	UCORED_REGEXHANDLE	"ucored_regex_t"
 static lua_State *ucored_state;
 
+static int ucored_spawn(pid_t *, int, char *const *, const char **errstrp);
+
 /* Core module */
 static int
 ucored_lua_logit(lua_State *L, int priority)
@@ -78,6 +80,87 @@ static int
 ucored_lua_error(lua_State *L)
 {
 	return (ucored_lua_logit(L, LOG_ERR));
+}
+
+static int
+ucored_lua_execute(lua_State *L)
+{
+	const char **argv;
+	const char *errstr = NULL;
+	int argc, status;
+	pid_t childpid, wpid;
+	struct sigaction osa, sa = { .sa_handler = SIG_DFL };
+
+	argc = lua_gettop(L);
+	if (argc == 0) {
+		luaL_pushfail(L);
+		lua_pushstring(L, "Expected command args");
+		return (2);
+	}
+
+	argv = calloc(argc + 1, sizeof(*argv));
+	if (argv == NULL) {
+		int serrno = errno;
+
+		luaL_pushfail(L);
+		lua_pushfstring(L, "calloc: %s", strerror(serrno));
+		return (2);
+	}
+
+	for (int i = 0; i < argc; i++) {
+		argv[i] = lua_tostring(L, i + 1);
+		if (argv[i] == NULL) {
+			free(argv);
+
+			luaL_pushfail(L);
+			lua_pushfstring(L, "Argument at index %d not a string",
+			    i);
+			return (2);
+		}
+	}
+
+	/*
+	 * Install our new signal handler before we spawn the child to avoid
+	 * losing the notification.  We'll drain any zombies we might have had
+	 * after when we return to the event loop if we are in an exceptional
+	 * situation and handling the core straight out of the ucored(8)
+	 * process.
+	 */
+	(void)sigaction(SIGCHLD, &sa, &osa);
+	if (ucored_spawn(&childpid, -1, __DECONST(char *const *, argv),
+	    &errstr) == -1) {
+		luaL_pushfail(L);
+		lua_pushstring(L, errstr);
+		return (2);
+	}
+
+	while ((wpid = waitpid(childpid, &status, 0)) != childpid) {
+		int serrno = errno;
+
+		if (serrno == EINTR)
+			continue;
+		luaL_pushfail(L);
+		lua_pushfstring(L, "waitpid: %s", strerror(serrno));
+		return (2);
+	}
+
+	(void)sigaction(SIGCHLD, &osa, NULL);
+	ucored_checkpwait = 1;
+
+	if (!WIFEXITED(status)) {
+		luaL_pushfail(L);
+		lua_pushfstring(L, "process %d signalled with signo %d",
+		    childpid, WTERMSIG(status));
+		return (2);
+	} else if (WEXITSTATUS(status) != 0) {
+		luaL_pushfail(L);
+		lua_pushfstring(L, "process %d exited with status %d",
+		    childpid, WEXITSTATUS(status));
+		return (2);
+	}
+
+	lua_pushboolean(L, 1);
+	return (1);
 }
 
 static int
@@ -246,6 +329,7 @@ ucored_lua_regcomp(lua_State *L)
 static const struct luaL_Reg corelib[] = {
 	REG_SIMPLE(debug),
 	REG_SIMPLE(error),
+	REG_SIMPLE(execute),
 	REG_SIMPLE(filetime),
 	REG_SIMPLE(info),
 	REG_SIMPLE(isdir),
@@ -721,10 +805,16 @@ ucored_ucore_pwd(lua_State *L)
 	return (ucored_ucore_strfetch(L, self, UDT_PWD, NULL));
 }
 
+/*
+ * Spawn off a pipe with `corefd` hooked up to stdin.  If corefd is not a valid
+ * fd, we'll assume that we want to hook /dev/null up to it instead.  This is
+ * used both to pipe a core into a process, and to generally execute a process.
+ */
 static int
-ucored_spawn_pipe(pid_t *pid, int corefd, char *const *argv,
+ucored_spawn(pid_t *pid, int corefd, char *const *argv,
     const char **errstrp)
 {
+
 	/* Maybe not portable, but it works on FreeBSD. */
 	posix_spawn_file_actions_t fa = NULL;
 	extern char **environ;
@@ -733,6 +823,8 @@ ucored_spawn_pipe(pid_t *pid, int corefd, char *const *argv,
 	devnull = open("/dev/null", O_RDWR);
 	if (devnull < 0)
 		goto failed;
+	if (corefd < 0)
+		corefd = devnull;
 
 	if (posix_spawn_file_actions_init(&fa) == -1)
 		goto failed;
@@ -835,7 +927,7 @@ ucored_ucore_pipe(lua_State *L)
 	 * process.
 	 */
 	(void)sigaction(SIGCHLD, &sa, &osa);
-	if (ucored_spawn_pipe(&childpid, corefd, __DECONST(char *const *, argv),
+	if (ucored_spawn(&childpid, corefd, __DECONST(char *const *, argv),
 	    &errstr) == -1) {
 		close(corefd);
 		luaL_pushfail(L);

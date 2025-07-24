@@ -91,6 +91,24 @@ the coredump if necessary, but cores produced by
 do not exist on disk and do not need to be unlinked.
 .Pp
 This is a final rule, and must be the last rule specified in a chain.
+.It Dv execute
+Executes a
+.Ar command .
+The
+.Ar command
+must be an absolute path, as the working directory of
+.Nm
+is undefined.
+The
+.Ar command
+may either be a string that will be word-split based on standard shell rules, or
+an array of arguments.
+.Pp
+The process will be run with
+.Pa /dev/null
+hooked up to standard input, standard output, and standard error.
+The environment it will run is inherited from
+.Nm .
 .It Dv ignore
 Ignores the coredump.
 For coredumps produced by
@@ -132,16 +150,14 @@ Pipes the core file to another
 .Ar command .
 The
 .Ar command
-must be an absolute path, as the working directory of
-.Nm
-is undefined.
-The
-.Ar command
-may either be a string that will be word-split based on standard shell rules, or
-an array of arguments.
+will be interpreted as it is specified for the
+.Dv execute
+action above, and the same constraints apply.
 The core file will be opened, if necessary, and passed to the standard input of
 the specified
-.Ar command .
+.Ar command
+instead of
+.Pa /dev/null .
 .It Dv script
 Specifies a script that will process the coredump.
 The

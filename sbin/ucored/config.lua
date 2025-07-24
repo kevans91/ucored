@@ -262,6 +262,43 @@ local action_handlers = {
 			return ok
 		end,
 	},
+	execute = {
+		apply = function(action, ucore)
+			local cmd = {}
+			for _, arg in ipairs(action.command) do
+				cmd[#cmd + 1] = replace_symbols(ucore, arg)
+			end
+
+			local path = ucore:path() or "<shm>"
+			local ok, err = core.execute(table.unpack(cmd))
+			local cmdname = cmd[1]
+
+			if not ok then
+				core.error(path .. " execute (" .. cmdname ..
+				    "): " .. err)
+			else
+				core.notice(path .. " executed " ..
+				    cmdname)
+			end
+
+			return ok
+		end,
+		validate = function(action)
+			local command = action.command
+
+			if type(command) ~= "table" then
+				command = command_shell_split(command)
+			end
+
+			if #command == 0 then
+				error("Execute directives must specify a command")
+			elseif not command[1]:match("^/") then
+				error("Execute commands must be an absolute path")
+			end
+
+			action.command = command
+		end,
+	},
 	ignore = {
 		only = true,
 		apply = function(_, ucore)
@@ -311,7 +348,7 @@ local action_handlers = {
 				cmd[#cmd + 1] = replace_symbols(ucore, arg)
 			end
 
-			local path = ucore:path()
+			local path = ucore:path() or "<shm>"
 			local ok, err = ucore:pipe(table.unpack(cmd))
 			local cmdname = cmd[1]
 
