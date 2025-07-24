@@ -436,7 +436,7 @@ function config.load()
 
 	local cfg = parser:get_object()
 	if not cfg['filters'] or type(cfg['filters']) ~= 'table' then
-		cfg_errors("filters config must be an object or array")
+		cfg_error("filters config must be an object or array")
 	end
 
 	-- A bit of syntactic sugar: a single filter may be specified as just an
@@ -452,7 +452,7 @@ function config.load()
 	for idx, filter in ipairs(cfg['filters']) do
 		local name = cfg['name'] or ("rule #" .. tostring(idx))
 
-		rules[#rules + 1] = process_rule(idx, filter)
+		rules[#rules + 1] = process_rule(name, filter)
 	end
 
 	return rules
