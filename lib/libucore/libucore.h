@@ -49,14 +49,19 @@ struct ucore_readable {
 
 typedef bool ucore_handle_fn(struct ucore_provider *);
 
+/* libucore.c */
 bool libucore_send_data(int fd, const void *payload, size_t payloadsz);
 bool libucore_read_data(int fd, void *payload, size_t payloadsz);
 
+void libucore_set_debug(bool dbg);
+void libucore_set_verbose(int verbose);
+void libucore_log(int priority, const char *fmt, ...) __printflike(2, 3);
+
+bool libucore_copy_file(int fromfd, int tofd, off_t fsize);
+
+/* libucore_dev.c */
 bool libucore_dev_available(bool);
 struct ucore_dev *libucore_dev_open(ucore_handle_fn *);
 struct ucore_readable *libucore_dev_readable(struct ucore_dev *);
 void libucore_dev_close(struct ucore_dev *);
 
-void libucore_set_debug(bool dbg);
-void libucore_set_verbose(int verbose);
-void libucore_log(int priority, const char *fmt, ...) __printflike(2, 3);

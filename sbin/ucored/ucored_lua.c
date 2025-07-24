@@ -550,84 +550,6 @@ ucored_ucore_jail(lua_State *L)
 	return (ucored_ucore_strfetch(L, self, UDT_JAIL, ""));
 }
 
-static bool
-ucored_copy_file_fallback(int fromfd, int tofd, off_t fsize)
-{
-	/*
-	 * We do parallel processing of cores, but only via fork() + process, so
-	 * this global buffer is still fine.
-	 */
-	static char buf[MAXPHYS];
-	size_t bufsz = sizeof(buf);
-	off_t copied = 0;
-
-	while (copied < fsize) {
-		size_t clipsz = MIN(fsize - copied, (off_t)bufsz);
-
-		if (!libucore_read_data(fromfd, buf, clipsz))
-			break;
-
-		if (!libucore_send_data(tofd, buf, clipsz))
-			break;
-
-		copied += clipsz;
-	}
-
-	/*
-	 * Given that we're copying cores from varying privilege levels, let's
-	 * be very careful to avoid any mishaps across handling of different
-	 * dumps.  Usually we process them in a fork(), but if fork() failed
-	 * then ucored(8) will process them in the main process to avoid a
-	 * service disruption since we can't really return a ucore to sender.
-	 *
-	 * Perhaps ucoredev(4) should grow a mechanism to 'ack' a core as
-	 * handled so that we can re-attempt it if the failure is transient?
-	 */
-	explicit_bzero(buf, sizeof(buf));
-	return (copied == fsize);
-}
-
-static bool
-ucored_copy_file(int fromfd, int tofd, off_t fsize)
-{
-	off_t copied = 0;
-	off_t fromoff, tooff = 0;
-
-	/* We must assume the caller wants us to copy from the current position. */
-	fromoff = lseek(fromfd, 0, SEEK_CUR);
-	while (copied < fsize) {
-		ssize_t ret;
-
-		ret = copy_file_range(fromfd, &fromoff, tofd, &tooff,
-		    fsize, 0);
-		if (ret == -1) {
-			if (errno == EINTR)
-				continue;
-
-			/*
-			 * EINVAL probably means we're copying from a shmfd rather than a
-			 * file, which is fine.  We'll just fallback to a manual read/write
-			 * loop.
-			 */
-			if (errno == EINVAL && copied == 0)
-				return (ucored_copy_file_fallback(fromfd, tofd, fsize));
-
-			return (false);
-		} else if (ret == 0) {
-			/*
-			 * Truncation is maybe sketchy, but we'll give it a
-			 * pass anyways.
-			 */
-			return (true);
-		}
-
-		/* Excellent, making progress. */
-		copied += ret;
-	}
-
-	return (true);
-}
-
 static int
 ucored_ucore_filename(lua_State *L)
 {
@@ -831,7 +753,7 @@ ucored_ucore_move(lua_State *L)
 	if (fflags != 0 && fchflags(tofd, fflags) == -1)
 		goto err;
 
-	if (!ucored_copy_file(fromfd, tofd, coresize)) {
+	if (!libucore_copy_file(fromfd, tofd, coresize)) {
 		free(newpath);
 		goto err;
 	}
