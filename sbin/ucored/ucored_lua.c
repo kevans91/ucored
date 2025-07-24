@@ -80,6 +80,29 @@ ucored_lua_error(lua_State *L)
 }
 
 static int
+ucored_lua_filetime(lua_State *L)
+{
+	struct stat sb;
+	const char *patharg;
+
+	patharg = luaL_checkstring(L, 1);
+	if (stat(patharg, &sb) == -1) {
+		lua_pushnil(L);
+		return (1);
+	}
+
+	if (!S_ISREG(sb.st_mode)) {
+		luaL_pushfail(L);
+		lua_pushstring(L, "exists but not a regular file");
+
+		return (2);
+	}
+
+	lua_pushnumber(L, sb.st_mtime);
+	return (1);
+}
+
+static int
 ucored_lua_info(lua_State *L)
 {
 	return (ucored_lua_logit(L, LOG_INFO));
@@ -222,6 +245,7 @@ ucored_lua_regcomp(lua_State *L)
 static const struct luaL_Reg corelib[] = {
 	REG_SIMPLE(debug),
 	REG_SIMPLE(error),
+	REG_SIMPLE(filetime),
 	REG_SIMPLE(info),
 	REG_SIMPLE(isdir),
 	REG_SIMPLE(mkpath),

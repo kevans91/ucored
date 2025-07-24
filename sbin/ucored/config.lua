@@ -8,6 +8,11 @@ local config = {}
 local core = require('core')
 local ucl = require('ucl')
 
+-- Defaults that intentionally match MAX_NUM_CORE_FILES and NUM_CORE_FILES from
+-- coredump_vnode.c.
+local max_core_limit = 100000
+local max_cores = 5
+
 -- Assumes fullpath is actually a path to a file, which is the case with
 -- ucore:path() at least.
 local function filename_part(fullpath)
@@ -34,6 +39,8 @@ local function replace_symbols(ucore, path)
 	--
 	-- Any functions here should take a single argument, the ucore that we
 	-- are examining.
+	--
+	-- %I is reserved for indexing, which is applied later.
 	local symbols = {
 		["%d"] = ucore.domainname,
 		["%h"] = ucore.hostname,
@@ -58,9 +65,42 @@ local function replace_symbols(ucore, path)
 	return path
 end
 
-local function process_destpath(ucore, path)
+-- Note that we only replace the first %I, not any subsequent ones.
+local function process_indexed_destpath(path, limit)
+	local oldest
+
+	for idx = 0, limit - 1 do
+		local sympath = path:gsub("%%I", tostring(idx), 1)
+
+		local mtime, err = core.filetime(sympath)
+		if not mtime and err then
+			-- Weird.  Not a file, but OK.  We'll just skip it.
+			core.notice(sympath .. " is not a file?")
+			goto skip
+		end
+
+		if not mtime then
+			return sympath
+		end
+
+		if not oldest or mtime < oldest[1] then
+			oldest = { mtime, sympath }
+		end
+
+		::skip::
+	end
+
+	path = oldest[2]
+	core.notice("Choosing " .. path .. " as oldest")
+
+	return path
+end
+
+local function process_destpath(ucore, path, limit)
 	local corepath = ucore:path()
 	local corefile = ucore:filename()
+
+	limit = limit or max_cores
 
 	-- We replace the symbols in the leading bits of the path independently
 	-- of the core filename part of the path
@@ -114,6 +154,13 @@ local function process_destpath(ucore, path)
 	-- filename of the original core.
 	if not filename then
 		path = path .. "/" .. replace_symbols(ucore, corefile)
+	end
+
+	if path:find("%%I") then
+		local opath = path
+		path = process_indexed_destpath(path, limit)
+
+		assert(path, "Failed to resolve indexed destpath " .. opath)
 	end
 
 	return path
@@ -196,7 +243,8 @@ local action_handlers = {
 	},
 	move = {
 		apply = function(action, ucore)
-			local dest = process_destpath(ucore, action.destination)
+			local dest = process_destpath(ucore, action.destination,
+			    action.max_cores)
 			local path = (ucore:path() or "<shm>")
 			local ok, err = ucore:move(dest)
 
@@ -213,6 +261,16 @@ local action_handlers = {
 
 			if not dest or #dest == 0 then
 				error("Destination must be specified for move rules")
+			end
+
+			if not action.max_cores then
+				return true
+			end
+
+			if action.max_cores < 0 or
+			    action.max_cores > max_core_limit then
+				error("max_cores=" .. action.max_cores ..
+				    " out of range 0 to " .. max_core_limit)
 			end
 
 			return true
