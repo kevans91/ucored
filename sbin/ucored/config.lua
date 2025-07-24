@@ -240,7 +240,17 @@ local action_handlers = {
 	discard = {
 		apply = function(_, ucore)
 			local path = ucore:path()
-			local ok, err = os.remove(path)
+			local ok, err
+
+			-- If we don't have a path set, then this is a shmfd
+			-- and we can simply call it discarded.  As soon as the
+			-- fd closes, we'll have discarded it.
+			if path then
+				ok, err = os.remove(path)
+			else
+				ok = true
+				path = "<shm>"
+			end
 
 			if not ok then
 				core.error(path .. ": " .. err)
@@ -253,7 +263,7 @@ local action_handlers = {
 	},
 	ignore = {
 		apply = function(_, ucore)
-			core.notice(ucore:path() .. " ignored")
+			core.notice((ucore:path() or "<shm>") .. " ignored")
 			return true
 		end,
 	},
