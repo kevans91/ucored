@@ -158,19 +158,39 @@ If unset, this will expand to the empty string.
 The hostname of the jail that the process belonged to, or the host if the
 process was unjailed.
 If unset, this will expand to the empty string.
+.It Dq \&%I
+An index to uniquify a corefile.
+Indices must be placed in the filename portion of a path.
+It will not be replaced in any other position, and only the first occurrence
+will be replaced.
+.Pp
+.Nm
+will replace the
+.Dq \&%I
+token with an index from 0 up to the
+.Va max_cores
+specified on the action, or 5 if unspecified, until it finds a file that does
+not exist.
+If all of the allowed corefiles under this scheme exist, then the oldest one
+will be replaced.
+.Pp
+Note that
+.Nm
+does not currently handle potential races well, so hopefully the process isn't
+repeatedly crashing and every single dump needs to be captured.
 .It Dq \&%j
 The jid of the jail that the process belonged to.
 This will be 0 for unjailed processes.
 .It Dq \&%n
-The original filename of the coredump.
-This is most useful for simply appending or prepending extra data to the
-filename.
+The name of the process.
 .It Dq \&%P
 The pid of the process' parent.
 .It Dq \&%p
 The pid of the process.
 .It Dq \&%s
 The signal that triggered the coredump.
+.It Dq \&%u
+The uid of the process credentials.
 .El
 .Ss Configuration
 Not yet.
@@ -186,15 +206,50 @@ The following methods are available on the ucore object:
 Returns a table of attributes received.
 The following attributes are recorded:
 .Bl -tag -width indent
+.It Dv compression
+A string describing the compression of the core.
+The following values are valid:
+.Bl -tag -width indent
+.It Dq
+No compression.
+This is
+.Va kern.compress_user_cores Ns = Ns 0 .
+.It Dq gzip
+Compressed with gzip.
+This is
+.Va kern.compress_user_cores Ns = Ns 1 .
+.It Dq zstd
+Compressed with zstd.
+This is
+.Va kern.compress_user_cores Ns = Ns 2 .
+.It Dq ???
+Unknown compression state.
+This shouldn't really happen in practice.
+.El
 .It Dv jid
 The jid of the jail that the process belonged to.
 This will be 0 for unjailed processes.
+.It Dv gid
+The gid of the process credentials.
 .It Dv ppid
 The pid of the process' parent.
 .It Dv pid
 The pid of the process.
+.It Dv tainted
+True if the process is running a setuid/setgid binary, or if the process had
+changed credentials since
+.Xr execve 2
+time.
+The
+.Dv uid
+and
+.Dv gid
+are overridden to root/wheel when a file is moved if the process has been
+tainted, for security reasons.
 .It Dv signal
 The signal that triggered the coredump.
+.It Dv uid
+The uid of the process credentials.
 .El
 .It Dv ucore:comm()
 The command that was running.
