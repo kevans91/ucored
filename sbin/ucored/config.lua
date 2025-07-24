@@ -163,13 +163,6 @@ local function process_destpath(ucore, path, limit)
 		path = path .. "/" .. replace_symbols(ucore, corefile)
 	end
 
-	if path:find("%%I") then
-		local opath = path
-		path = process_indexed_destpath(path, limit)
-
-		assert(path, "Failed to resolve indexed destpath " .. opath)
-	end
-
 	-- We'll slap a compression suffix on it if we need to, but if we're
 	-- moving it from some other path and not from a shmfd it may already
 	-- have the correct suffix.
@@ -177,6 +170,13 @@ local function process_destpath(ucore, path, limit)
 	local suffix = compression_suffix_map[attrs.compression]
 	if suffix and not path:find("%" .. suffix .. "$") then
 		path = path .. suffix
+	end
+
+	if path:find("%%I") then
+		local opath = path
+		path = process_indexed_destpath(path, limit)
+
+		assert(path, "Failed to resolve indexed destpath " .. opath)
 	end
 
 	return path
