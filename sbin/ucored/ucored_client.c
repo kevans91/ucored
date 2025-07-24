@@ -13,6 +13,7 @@
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "ucored.h"
@@ -40,6 +41,7 @@ struct ucored_client {
 
 static SLIST_HEAD(, ucored_client) all_clients =
     SLIST_HEAD_INITIALIZER(all_clients);
+size_t ucored_clients;
 
 static const struct ucore_data *
 ucored_client_data(const struct ucore_provider *up, enum ucore_data_type type)
@@ -334,6 +336,12 @@ ucored_client_alloc(int kq, int clsock)
 	ucored_client_init_readable(cl, clsock);
 	ucored_client_init_provider(cl);
 
+	if (ucored_clients == 0)
+		assert(SLIST_EMPTY(&all_clients));
+	else
+		assert(!SLIST_EMPTY(&all_clients));
+
+	ucored_clients++;
 	SLIST_INSERT_HEAD(&all_clients, cl, cl_client);
 	SLIST_INIT(&cl->cl_datasegs);
 	ucored_now(&cl->cl_lastseen);
@@ -388,6 +396,12 @@ ucored_client_close(struct ucored_client *cl, bool acked)
 	}
 
 	SLIST_REMOVE(&all_clients, cl, ucored_client, cl_client);
+	ucored_clients--;
+
+	if (ucored_clients == 0)
+		assert(SLIST_EMPTY(&all_clients));
+	else
+		assert(!SLIST_EMPTY(&all_clients));
 
 	free(cl);
 }
@@ -399,4 +413,36 @@ ucored_client_close_all(void)
 
 	while ((cl = SLIST_FIRST(&all_clients)) != NULL)
 		ucored_client_close(cl, false);
+}
+
+size_t
+ucored_client_purge_inactive(void)
+{
+	struct timespec now;
+	struct ucored_client *cl, *tcl;
+#ifndef NDEBUG
+	size_t clients = ucored_clients;
+#endif
+	size_t purged = 0;
+
+	ucored_now(&now);
+	SLIST_FOREACH_SAFE(cl, &all_clients, cl_client, tcl) {
+		struct timespec inactive;
+
+		timespecsub(&now, &cl->cl_lastseen, &inactive);
+		if (inactive.tv_sec >= UCORED_TIMEOUT) {
+
+			libucore_log(LOG_INFO, "purged client inactive for %jd seconds\n",
+			    inactive.tv_sec);
+
+			/*
+			 * Do not ack an inactive client; who knows what that will do.
+			 */
+			ucored_client_close(cl, true);
+			purged++;
+		}
+	}
+
+	assert(ucored_clients == clients - purged);
+	return (purged);
 }

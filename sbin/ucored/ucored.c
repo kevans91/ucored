@@ -33,8 +33,6 @@
 #define SOCK_CLOFORK 0
 #endif
 
-#define	UCORED_TIMEOUT	60	/* Seconds */
-
 /* sysctl to enable devctl notifications upon coredump. */
 #define	DEVCTL_SYSCTL	"kern.coredump_devctl"
 
@@ -403,15 +401,36 @@ ucored_accept(struct ucore_readable *ur, size_t backlog, bool eof __unused)
 			return (true);
 		}
 
-		/*
-		 * XXX Consider setting up an EVILT_TIMER with
-		 * with ident=(uintptr_t)cl to release resources from a
-		 * ucored client if they don't send us something valid in a
-		 * timely manner.  We don't bother in the socket-initiated case
-		 * because each instance services just a single client.
-		 */
 		if (ucored_client_alloc(kq, clsock) == NULL)
 			return (true);
+	}
+
+	return (true);
+}
+
+static void
+ucored_timer(void)
+{
+	size_t purged;
+
+	purged = ucored_client_purge_inactive();
+	if (purged > 0)
+		libucore_log(LOG_NOTICE, "purged %zu inactive clients", purged);
+}
+
+static bool
+ucored_set_timer(int kq, bool state)
+{
+	struct kevent kev;
+	int flag;
+
+	flag = EV_ADD | (state ? EV_ENABLE : EV_DISABLE);
+	EV_SET(&kev, 0, EVFILT_TIMER, flag, NOTE_SECONDS, UCORED_TIMEOUT + 1,
+	    NULL);
+	if (kevent(kq, &kev, 1, NULL, 0, NULL) == -1) {
+		libucore_log(LOG_ERR, "%s timer kevent: %m",
+		    state ? "enable" : "disable");
+		return (false);
 	}
 
 	return (true);
@@ -426,6 +445,9 @@ ucored_loop(int kq)
 	assert(kq >= 0);
 
 	for (;;) {
+		size_t current_clients;
+		bool timer_fired;
+
 		atomic_signal_fence(memory_order_acquire);
 
 		if (ucored_checkpwait) {
@@ -445,6 +467,8 @@ ucored_loop(int kq)
 			return (1);
 		}
 
+		current_clients = ucored_clients;
+		timer_fired = false;
 		for (int idx = 0; idx < ret; idx++) {
 			const struct kevent *evt = &kev[idx];
 			struct ucore_readable *ur;
@@ -454,7 +478,15 @@ ucored_loop(int kq)
 			fd = evt->ident;
 			ur = evt->udata;
 
-			/* XXX If we add a timer, we'll probably trip this. */
+			/*
+			 * Process any other events before we process the timer, just in
+			 * case one of them is a client trying to send us information.
+			 */
+			if (evt->filter == EVFILT_TIMER) {
+				timer_fired = true;
+				continue;
+			}
+
 			assert(ur != NULL);
 
 			libucore_log(LOG_DEBUG, "Fetching data from fd %d",
@@ -487,6 +519,20 @@ ucored_loop(int kq)
 
 			if (rearm)
 				ucored_watch_socket(kq, ur);
+		}
+
+		if (timer_fired)
+			ucored_timer();
+
+		/* On a state transition, arm or disarm our timer. */
+		if ((current_clients != 0) != (ucored_clients != 0)) {
+			bool state = ucored_clients != 0;
+
+			libucore_log(LOG_INFO,
+			    "Clients went from %zu -> %zu, %sarming the alarm",
+			    current_clients, ucored_clients,
+			    state ? "" : "dis");
+			ucored_set_timer(kq, state);
 		}
 	}
 

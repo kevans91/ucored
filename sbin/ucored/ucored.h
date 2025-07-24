@@ -16,6 +16,8 @@
 
 #include "libucore.h"
 
+#define	UCORED_TIMEOUT	60	/* Seconds */
+
 enum ucored_state {
 	STATE_HDR = 0,
 	STATE_DATASEGS,
@@ -37,11 +39,15 @@ void ucored_now(struct timespec *);
 int ucored_watch_socket(int, struct ucore_readable *);
 
 /* ucored_client.c */
+extern size_t ucored_clients;
+
 bool ucored_client_newseg(struct ucored_client *, struct ucore_data_hdr *);
 struct ucored_client *ucored_client_alloc(int, int);
 void ucored_client_done(struct ucored_client *);
 void ucored_client_close(struct ucored_client *, bool);
 void ucored_client_close_all(void);
+
+size_t ucored_client_purge_inactive(void);
 
 /* ucored_lua.c */
 bool ucored_lua_init(void);
