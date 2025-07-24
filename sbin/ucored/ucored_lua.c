@@ -535,6 +535,16 @@ ucored_ucore_move(lua_State *L)
 		corepath = (const char *)ucored_ucore_strfetch_value(self, UDT_PATH);
 	path = luaL_checkstring(L, 2);
 
+	/*
+	 * Just tap out a copy ahead of time, so that we fail early if we go ENOMEM
+	 * and can't execute the entire filter chain properly.
+	 */
+	newpath = strdup(path);
+	if (newpath == NULL) {
+		serrno = errno;
+		goto err;
+	}
+
 	up = self->up;
 	hdr = (*up->p_fetch_header)(up);
 
@@ -551,6 +561,9 @@ ucored_ucore_move(lua_State *L)
 		 * Attempt to rename first; maybe we'll get lucky.
 		 */
 		if (rename(corepath, path) == 0) {
+			free(self->curpath);
+			self->curpath = newpath;
+
 			lua_pushboolean(L, 1);
 			return (1);
 		} else if (errno != EXDEV) {
@@ -653,12 +666,6 @@ ucored_ucore_move(lua_State *L)
 	if (fflags != 0 && fchflags(tofd, fflags) == -1)
 		goto err;
 
-	newpath = strdup(path);
-	if (newpath == NULL) {
-		serrno = errno;
-		goto err;
-	}
-
 	if (!ucored_copy_file(fromfd, tofd, coresize)) {
 		free(newpath);
 		goto err;
@@ -679,6 +686,7 @@ ucored_ucore_move(lua_State *L)
 err:
 	serrno = errno;
 
+	free(newpath);
 	if (fromfd >= 0)
 		close(fromfd);
 	if (tofd >= 0)
