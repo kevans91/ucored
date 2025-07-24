@@ -275,7 +275,14 @@ libucore_dev_core_decode(int fd)
 
 	core->core_map = MAP_FAILED;
 	core->core_fd = fd;
-	map = mmap(NULL, coresz, PROT_READ, MAP_PRIVATE, fd, 0);
+
+	/*
+	 * We exclude this from our own cores just to avoid bloating them.
+	 * ucored(8) is generally written in a way that we can probably deduce
+	 * failure modes without having immediate access to the core that caused
+	 * it.
+	 */
+	map = mmap(NULL, coresz, PROT_READ, MAP_PRIVATE | MAP_NOCORE, fd, 0);
 	if (map == MAP_FAILED) {
 		libucore_log(LOG_ERR, "mmap: %m");
 		goto invalid;
