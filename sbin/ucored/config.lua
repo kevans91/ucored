@@ -238,6 +238,7 @@ end
 
 local action_handlers = {
 	discard = {
+		final = true,
 		apply = function(_, ucore)
 			local path = ucore:path()
 			local ok, err
@@ -262,6 +263,7 @@ local action_handlers = {
 		end,
 	},
 	ignore = {
+		only = true,
 		apply = function(_, ucore)
 			core.notice((ucore:path() or "<shm>") .. " ignored")
 			return true
@@ -340,6 +342,7 @@ local action_handlers = {
 		end,
 	},
 	script = {
+		final = true,
 		apply = function(action, ucore)
 			local ok = action.handler(ucore)
 			core.notice(ucore:path() .. " handed over to " .. action.file)
@@ -374,13 +377,27 @@ function Rule:new(name, matchers, actions)
 		error("rule " .. name .. " has no specified action")
 	end
 
+	local finalized
 	for _, action in ipairs(actions) do
+		if finalized then
+			error("rule " .. name .. ": '" .. finalized ..
+			    "' should have been the final rule")
+		end
+
 		local handler = action_handlers[action.type]
 		if not handler then
 			error("rule " .. name .. " has an invalid action '" ..
 				action.type .. "'")
 		elseif handler.validate then
 			handler.validate(action)
+		end
+
+		if handler.final then
+			finalized = action.type
+		end
+		if handler.only and #actions ~= 1 then
+			error("rule " .. name .. " has a '" .. action.type ..
+			    "' action, which should be the only action")
 		end
 	end
 

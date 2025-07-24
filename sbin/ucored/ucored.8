@@ -86,9 +86,22 @@ Discards the coredump completely.
 .Nm
 will promptly
 .Xr unlink 2
-the coredump.
+the coredump if necessary, but cores produced by
+.Xr ucoredev 4
+do not exist on disk and do not need to be unlinked.
+.Pp
+This is a final rule, and must be the last rule specified in a chain.
 .It Dv ignore
 Ignores the coredump.
+For coredumps produced by
+.Xr ucoredev 4 ,
+this is the same as the
+.Dv discard
+policy.
+.Pp
+It does not make sense to combine an
+.Dv ignore
+rule with any other rule, and attempts to do so will raise an error.
 .It Dv move
 Moves the core file to some other
 .Ar destination
@@ -125,7 +138,10 @@ is undefined.
 The
 .Ar command
 may either be a string that will be word-split based on standard shell rules, or
-a table of arguments.
+an array of arguments.
+The core file will be opened, if necessary, and passed to the standard input of
+the specified
+.Ar command .
 .It Dv script
 Specifies a script that will process the coredump.
 The
@@ -139,6 +155,8 @@ See
 below for more details on what
 .Nm
 provides in a ucore object.
+.Pp
+This is a final rule, and must be the last rule specified in a chain.
 .El
 .Ss Path Substitutions
 The
@@ -316,6 +334,7 @@ utility exits 1 if an error occurs in startup.
 .Xr unlink 2 ,
 .Xr pidfile 3 ,
 .Xr signal 3 ,
+.Xr ucoredev 8 ,
 .Xr devd 8 ,
 .Xr inetd 8 ,
 .Xr sysctl 8
