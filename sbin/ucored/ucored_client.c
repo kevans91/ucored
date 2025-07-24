@@ -370,7 +370,15 @@ ucored_client_close(struct ucored_client *cl, bool acked)
 	}
 
 	while ((cld = SLIST_FIRST(&cl->cl_datasegs)) != NULL) {
+		struct ucore_data *ud;
+		size_t datasz;
+
 		SLIST_REMOVE_HEAD(&cl->cl_datasegs, cl_entry);
+
+		ud = &cld->cl_data;
+		datasz = sizeof(*ud) + ud->ud_hdr.uhdr_size;
+		explicit_bzero(ud, datasz);
+
 		free(cld);
 	}
 

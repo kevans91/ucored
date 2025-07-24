@@ -554,8 +554,8 @@ static bool
 ucored_copy_file_fallback(int fromfd, int tofd, off_t fsize)
 {
 	/*
-	 * We won't be doing any parallel processing of ucores, unless we move to
-	 * a forking model.  In which case, ~whatever.
+	 * We do parallel processing of cores, but only via fork() + process, so
+	 * this global buffer is still fine.
 	 */
 	static char buf[MAXPHYS];
 	size_t bufsz = sizeof(buf);
@@ -565,15 +565,26 @@ ucored_copy_file_fallback(int fromfd, int tofd, off_t fsize)
 		size_t clipsz = MIN(fsize - copied, (off_t)bufsz);
 
 		if (!libucore_read_data(fromfd, buf, clipsz))
-			return (false);
+			break;
 
 		if (!libucore_send_data(tofd, buf, clipsz))
-			return (false);
+			break;
 
 		copied += clipsz;
 	}
 
-	return (true);
+	/*
+	 * Given that we're copying cores from varying privilege levels, let's
+	 * be very careful to avoid any mishaps across handling of different
+	 * dumps.  Usually we process them in a fork(), but if fork() failed
+	 * then ucored(8) will process them in the main process to avoid a
+	 * service disruption since we can't really return a ucore to sender.
+	 *
+	 * Perhaps ucoredev(4) should grow a mechanism to 'ack' a core as
+	 * handled so that we can re-attempt it if the failure is transient?
+	 */
+	explicit_bzero(buf, sizeof(buf));
+	return (copied == fsize);
 }
 
 static bool
