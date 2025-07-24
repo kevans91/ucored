@@ -13,6 +13,11 @@ local ucl = require('ucl')
 local max_core_limit = 100000
 local max_cores = 5
 
+local compression_suffix_map = {
+	gzip = ".gz",
+	zstd = ".zst",
+}
+
 -- Assumes fullpath is actually a path to a file, which is the case with
 -- ucore:path() at least.
 local function filename_part(fullpath)
@@ -26,7 +31,7 @@ end
 local function replace_symbols(ucore, path)
 	local attrs = ucore:attributes()
 
-	local function pname(ucore)
+	local function pname()
 		local comm = ucore:comm()
 
 		return filename_part(comm)
@@ -38,7 +43,8 @@ local function replace_symbols(ucore, path)
 	-- actually specified.
 	--
 	-- Any functions here should take a single argument, the ucore that we
-	-- are examining.
+	-- are examining.  It's fine if the function is a local defined above
+	-- that just uses the ucore upvalue and ignores its parameter.
 	--
 	-- %I is reserved for indexing, which is applied later.
 	local symbols = {
@@ -49,6 +55,7 @@ local function replace_symbols(ucore, path)
 		["%P"] = attrs.ppid,
 		["%p"] = attrs.pid,
 		["%s"] = attrs.signal,
+		["%u"] = attrs.uid,
 	}
 
 	for sym, val in pairs(symbols) do
@@ -163,6 +170,11 @@ local function process_destpath(ucore, path, limit)
 		assert(path, "Failed to resolve indexed destpath " .. opath)
 	end
 
+	local attrs = ucore:attributes()
+	local suffix = compression_suffix_map[attrs.compression]
+	if suffix then
+		path = path .. suffix
+	end
 	return path
 end
 

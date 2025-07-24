@@ -958,6 +958,29 @@ ucored_lua_push_ucore(struct ucore_provider *up)
 	lua_setfield(ucored_state, -2, "ppid");
 	lua_pushinteger(ucored_state, ucore->ucore_pid);
 	lua_setfield(ucored_state, -2, "pid");
+	lua_pushinteger(ucored_state, ucore->ucore_uid);
+	lua_setfield(ucored_state, -2, "uid");
+	lua_pushinteger(ucored_state, ucore->ucore_gid);
+	lua_setfield(ucored_state, -2, "gid");
+	lua_pushboolean(ucored_state, ucore->ucore_tainted);
+	lua_setfield(ucored_state, -2, "tainted");
+
+	switch (ucore->ucore_compression) {
+	case UCOMP_NONE:
+		lua_pushstring(ucored_state, "");
+		break;
+	case UCOMP_GZIP:
+		lua_pushstring(ucored_state, "gzip");
+		break;
+	case UCOMP_ZSTD:
+		lua_pushstring(ucored_state, "zstd");
+		break;
+	case UCOMP_UNKNOWN:
+	default:
+		lua_pushstring(ucored_state, "???");
+		break;
+	}
+	lua_setfield(ucored_state, -2, "compression");
 
 	lua_setiuservalue(ucored_state, -2, UCV_ATTRS);
 }
