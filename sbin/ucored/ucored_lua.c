@@ -55,7 +55,8 @@ enum ucore_uvalues {
 #define	UCORED_REGEXHANDLE	"ucored_regex_t"
 static lua_State *ucored_state;
 
-static int ucored_spawn(pid_t *, int, char *const *, const char **errstrp);
+static int ucored_spawn(pid_t *, int, char *const *, char *const *,
+    const char **errstrp);
 
 /* Core module */
 static int
@@ -82,24 +83,76 @@ ucored_lua_error(lua_State *L)
 	return (ucored_lua_logit(L, LOG_ERR));
 }
 
+static void
+free_env(char **envp)
+{
+	for (char **val = envp; *val != NULL; val++)
+		free(*val);
+	free(envp);
+}
+
+static char **
+ucored_collect_envp(lua_State *L, int idx)
+{
+	char **envp = NULL;
+	size_t envidx = 0, envc;
+
+	/*
+	 * We set a __len metamethod on our environment so that we can cleanly
+	 * preallocate the # entries we need.
+	 */
+	lua_len(L, idx);
+	envc = lua_tonumber(L, -1);
+	lua_pop(L, 1);	/* Take envc off */
+
+	envp = calloc(envc + 1, sizeof(*envp));
+	if (envp == NULL)
+		return (NULL);
+
+	lua_pushnil(L);
+	while (lua_next(L, idx) != 0) {
+		const char *key, *val;
+
+		key = lua_tostring(L, -2);
+		val = lua_tostring(L, -1);
+
+		assert(envidx < envc);
+		if (asprintf(&envp[envidx++], "%s=%s", key, val) == -1)
+			goto failed;
+
+		lua_pop(L, 1);	/* Pop value off */
+	}
+
+	return (envp);
+failed:
+	free_env(envp);
+	return (NULL);
+}
+
 static int
 ucored_lua_execute(lua_State *L)
 {
 	const char **argv;
 	const char *errstr = NULL;
+	char **envp;
 	int argc, status;
 	pid_t childpid, wpid;
 	struct sigaction osa, sa = { .sa_handler = SIG_DFL };
 
-	argc = lua_gettop(L);
+	argc = lua_gettop(L) - 1;
 	if (argc == 0) {
 		luaL_pushfail(L);
-		lua_pushstring(L, "Expected command args");
+		lua_pushstring(L, "Expected command args after environment");
 		return (2);
 	}
 
-	argv = calloc(argc + 1, sizeof(*argv));
-	if (argv == NULL) {
+	if (!lua_istable(L, 1) && !lua_isnil(L, 1)) {
+		luaL_pushfail(L);
+		lua_pushstring(L, "Expected an env or table for argument #1");
+		return (2);
+	}
+
+	if ((envp = ucored_collect_envp(L, 1)) == NULL) {
 		int serrno = errno;
 
 		luaL_pushfail(L);
@@ -107,14 +160,25 @@ ucored_lua_execute(lua_State *L)
 		return (2);
 	}
 
+	argv = calloc(argc + 1, sizeof(*argv));
+	if (argv == NULL) {
+		int serrno = errno;
+
+		free_env(envp);
+		luaL_pushfail(L);
+		lua_pushfstring(L, "calloc: %s", strerror(serrno));
+		return (2);
+	}
+
 	for (int i = 0; i < argc; i++) {
-		argv[i] = lua_tostring(L, i + 1);
+		argv[i] = lua_tostring(L, i + 2);
 		if (argv[i] == NULL) {
+			free_env(envp);
 			free(argv);
 
 			luaL_pushfail(L);
 			lua_pushfstring(L, "Argument at index %d not a string",
-			    i);
+			    i + 1);
 			return (2);
 		}
 	}
@@ -127,12 +191,17 @@ ucored_lua_execute(lua_State *L)
 	 * process.
 	 */
 	(void)sigaction(SIGCHLD, &sa, &osa);
-	if (ucored_spawn(&childpid, -1, __DECONST(char *const *, argv),
+	if (ucored_spawn(&childpid, -1, __DECONST(char *const *, argv), envp,
 	    &errstr) == -1) {
+		free_env(envp);
+		free(argv);
 		luaL_pushfail(L);
 		lua_pushstring(L, errstr);
 		return (2);
 	}
+
+	free_env(envp);
+	free(argv);
 
 	while ((wpid = waitpid(childpid, &status, 0)) != childpid) {
 		int serrno = errno;
@@ -811,13 +880,12 @@ ucored_ucore_pwd(lua_State *L)
  * used both to pipe a core into a process, and to generally execute a process.
  */
 static int
-ucored_spawn(pid_t *pid, int corefd, char *const *argv,
+ucored_spawn(pid_t *pid, int corefd, char *const *argv, char *const *envp,
     const char **errstrp)
 {
 
 	/* Maybe not portable, but it works on FreeBSD. */
 	posix_spawn_file_actions_t fa = NULL;
-	extern char **environ;
 	int devnull = -1, error;
 
 	devnull = open("/dev/null", O_RDWR);
@@ -839,7 +907,7 @@ ucored_spawn(pid_t *pid, int corefd, char *const *argv,
 	if (posix_spawn_file_actions_addclosefrom_np(&fa, 3) == -1)
 		goto failed;
 
-	error = posix_spawn(pid, argv[0], &fa, NULL, argv, environ);
+	error = posix_spawn(pid, argv[0], &fa, NULL, argv, envp);
 	if (error != 0) {
 		*errstrp = strerror(error);
 		error = -1;
@@ -863,6 +931,7 @@ ucored_ucore_pipe(lua_State *L)
 {
 	struct luaucore *self;
 	const char **argv;
+	char **envp;
 	const char *corepath, *errstr = NULL;
 	int argc, corefd = -1, status;
 	pid_t childpid, wpid;
@@ -875,10 +944,17 @@ ucored_ucore_pipe(lua_State *L)
 		corepath = (const char *)ucored_ucore_strfetch_value(self,
 		    UDT_PATH);
 	}
-	argc = lua_gettop(L) - 1;
+
+	if (!lua_istable(L, 2) && !lua_isnil(L, 2)) {
+		luaL_pushfail(L);
+		lua_pushstring(L, "Expected an env or table for argument #1");
+		return (2);
+	}
+
+	argc = lua_gettop(L) - 2;
 	if (argc == 0) {
 		luaL_pushfail(L);
-		lua_pushstring(L, "Expected command args after ucore");
+		lua_pushstring(L, "Expected command args after environment");
 		return (2);
 	}
 
@@ -896,25 +972,35 @@ ucored_ucore_pipe(lua_State *L)
 		return (2);
 	}
 
+	if ((envp = ucored_collect_envp(L, 2)) == NULL) {
+		int serrno = errno;
+
+		luaL_pushfail(L);
+		lua_pushfstring(L, "calloc: %s", strerror(serrno));
+		return (2);
+	}
+
 	argv = calloc(argc + 1, sizeof(*argv));
 	if (argv == NULL) {
 		int serrno = errno;
 
 		close(corefd);
+		free_env(envp);
 		luaL_pushfail(L);
 		lua_pushfstring(L, "calloc: %s", strerror(serrno));
 		return (2);
 	}
 
 	for (int i = 0; i < argc; i++) {
-		argv[i] = lua_tostring(L, i + 2);
+		argv[i] = lua_tostring(L, i + 3);
 		if (argv[i] == NULL) {
 			close(corefd);
+			free_env(envp);
 			free(argv);
 
 			luaL_pushfail(L);
 			lua_pushfstring(L, "Argument at index %d not a string",
-			    i + 1);
+			    i + 2);
 			return (2);
 		}
 	}
@@ -927,15 +1013,20 @@ ucored_ucore_pipe(lua_State *L)
 	 * process.
 	 */
 	(void)sigaction(SIGCHLD, &sa, &osa);
-	if (ucored_spawn(&childpid, corefd, __DECONST(char *const *, argv),
+	if (ucored_spawn(&childpid, corefd, __DECONST(char *const *, argv), envp,
 	    &errstr) == -1) {
 		close(corefd);
+		free_env(envp);
+		free(argv);
 		luaL_pushfail(L);
 		lua_pushstring(L, errstr);
 		return (2);
 	}
 
 	close(corefd);
+	free_env(envp);
+	free(argv);
+
 	while ((wpid = waitpid(childpid, &status, 0)) != childpid) {
 		int serrno = errno;
 

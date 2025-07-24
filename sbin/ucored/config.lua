@@ -8,6 +8,8 @@ local config = {}
 local core = require('core')
 local ucl = require('ucl')
 
+local inherit_vars = { "LANG", "PATH" }
+
 -- Defaults that intentionally match MAX_NUM_CORE_FILES and NUM_CORE_FILES from
 -- coredump_vnode.c.
 local max_core_limit = 100000
@@ -183,6 +185,71 @@ local function process_destpath(ucore, path, limit)
 	return path
 end
 
+-- Build an environment table for execute/pipe to use.
+local function command_env(ucore, extravars)
+	local env = {}
+	local nenv = 0
+
+	local function dollar_subst(val)
+		local resolved = {}
+
+		for var in val:gmatch("$[A-Za-z_][A-Za-z0-9_]*") do
+			if not resolved[var] then
+				resolved[var] = true
+
+				-- Strip off the dollar sign
+				local name = var:sub(2)
+				local eval = os.getenv(name) or ""
+
+				-- We replace the var if it appears right at the
+				-- beginning at the string, then at any position
+				-- thereafter where it is not preceded by a \ to
+				-- escape the dollar sign.  We don't do
+				-- anything fancier than converting \$ -> $.
+				val = val:gsub("^" .. var, eval)
+				val = val:gsub("([^\\])" .. var, "%1" .. eval)
+
+				-- And the escaped strings.
+				val = val:gsub("[\\]" .. var, var)
+			end
+		end
+
+		return val
+	end
+
+	for _, var in ipairs(inherit_vars) do
+		local val = os.getenv(var)
+
+		if val then
+			nenv = nenv + 1
+			env[var] = val
+		end
+	end
+
+	if extravars then
+		for k, v in pairs(extravars) do
+			if v then
+				if not env[k] then
+					nenv = nenv + 1
+				end
+
+				env[k] = replace_symbols(ucore, dollar_subst(v))
+				core.error(k .. " set to " .. env[k])
+			elseif env[k] then
+				-- The config can set a variable to false to
+				-- unset it if it's set.
+				nenv = nenv - 1
+				env[k] = nil
+			end
+		end
+	end
+
+	return setmetatable(env, {
+		__len = function()
+			return nenv
+		end})
+end
+
 local function command_shell_split(command)
 	local tbl = {}
 	local arg = ""
@@ -270,8 +337,9 @@ local action_handlers = {
 				cmd[#cmd + 1] = replace_symbols(ucore, arg)
 			end
 
+			local env = command_env(ucore, action.env)
 			local path = ucore:path() or "<shm>"
-			local ok, err = core.execute(table.unpack(cmd))
+			local ok, err = core.execute(env, table.unpack(cmd))
 			local cmdname = cmd[1]
 
 			if not ok then
@@ -298,6 +366,19 @@ local action_handlers = {
 			end
 
 			action.command = command
+
+			if action.env then
+				if type(action.env) ~= "table" then
+					error("Execute command's env must be a table of strings")
+				end
+
+				for k, v in pairs(action.env) do
+					if v and type(v) ~= "string" then
+						error("Execute command's env " ..
+						    k .. " value is not a string")
+					end
+				end
+			end
 		end,
 	},
 	ignore = {
@@ -349,8 +430,9 @@ local action_handlers = {
 				cmd[#cmd + 1] = replace_symbols(ucore, arg)
 			end
 
+			local env = command_env(ucore, action.env)
 			local path = ucore:path() or "<shm>"
-			local ok, err = ucore:pipe(table.unpack(cmd))
+			local ok, err = ucore:pipe(env, table.unpack(cmd))
 			local cmdname = cmd[1]
 
 			if not ok then
@@ -377,6 +459,19 @@ local action_handlers = {
 			end
 
 			action.command = command
+
+			if action.env then
+				if type(action.env) ~= "table" then
+					error("Pipe command's env must be a table of strings")
+				end
+
+				for k, v in pairs(action.env) do
+					if v and type(v) ~= "string" then
+						error("Pipe command's env " ..
+						    k .. " value is not a string")
+					end
+				end
+			end
 		end,
 	},
 	script = {
