@@ -686,13 +686,18 @@ ucored_ucore_move(lua_State *L)
 	}
 
 	fflags = hdr->ucore_fflags & UCORED_FFLAGS_PRESERVED;
-	if (hdr->ucore_tainted) {
+	if (hdr->ucore_tainted || hdr->ucore_jid != 0) {
 		/*
 		 * For tainted processes, we'll allow the dump if system policy
 		 * has it enabled, but we draw a hard line at letting an
 		 * unprivileged process access it.  For normal privilege
 		 * dropping that seems fine, it's going to be some other user
 		 * debugging it anyways.
+		 *
+		 * We also reset permissions on jailed cores, because uid 1001
+		 * in the jail likely (probably) isn't uid 1001 on the host.  It
+		 * would be a potential security issue to give another
+		 * unprivileged user on the host access by default.
 		 */
 		uid = UID_ROOT;
 		gid = GID_WHEEL;
