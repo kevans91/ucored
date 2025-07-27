@@ -8,6 +8,9 @@
 
 #include <sys/types.h>
 #include <sys/queue.h>
+#ifndef _KERNEL
+#include <stdbool.h>
+#endif
 
 #define	UCORE_MAGIC	"UCORE0"
 
