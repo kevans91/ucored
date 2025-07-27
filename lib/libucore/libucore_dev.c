@@ -353,7 +353,7 @@ libucore_dev_core_decode(int fd)
 		dhdr = &ud->ud_hdr;
 
 		if (dhdr->uhdr_size > UCORED_MAXSEGSZ) {
-			libucore_log(LOG_ERR, "%zu segment size larger than max (%d) -- drop",
+			libucore_log(LOG_ERR, "%u segment size larger than max (%d) -- drop",
 			    dhdr->uhdr_size, UCORED_MAXSEGSZ);
 			goto invalid;
 		}

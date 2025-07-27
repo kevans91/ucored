@@ -228,7 +228,7 @@ ucored_client_newseg(struct ucored_client *cl, struct ucore_data_hdr *hdr)
 	assert(cl->cl_curdataseg == NULL);
 	if (hdr->uhdr_size > UCORED_MAXSEGSZ) {
 		libucore_log(LOG_ERR,
-		    "overly large segment (%zu) -- closing connection",
+		    "overly large segment (%u) -- closing connection",
 		    hdr->uhdr_size);
 		return (false);
 	}

@@ -56,7 +56,7 @@ enum ucore_data_type {
 
 struct ucore_data_hdr {
 	enum ucore_data_type	uhdr_type;
-	size_t			uhdr_size;	/* Payload size */
+	uint32_t		uhdr_size;	/* Payload size */
 };
 
 struct ucore_data {
@@ -65,14 +65,6 @@ struct ucore_data {
 	/*
 	 * We *might* end up stuffing arbitrary data in here, so potentially
 	 * bump the alignment requirement to avoid problems down the road.
-	 *
-	 * In practice, I'd suspect that we'll almost always have natural
-	 * alignment by way of ucore_data_hdr having a size_t in it, but I'd
-	 * rather not preclude the possibility of making a change to the header
-	 * that would adjust its alignment.  For instance, uhdr_size could be a
-	 * lot smaller because we havw a 4k data limit -- we could realistically
-	 * make it a uint16_t because 64k would be a weirdly large amounr of
-	 * metadata to export.
 	 */
 	_Alignas(__max_align_t) uint8_t	ud_data[];
 };
