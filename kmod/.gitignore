@@ -1,5 +1,6 @@
 *
 !Makefile
 !*.c
+!*.4
 !coredump_ucored.h
 !.gitignore

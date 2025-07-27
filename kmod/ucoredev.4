@@ -1,0 +1,107 @@
+.\"
+.\" Copyright (C) 2025 Kyle Evans <kevans@FreeBSD.org>
+.\"
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.Dd July 26, 2025
+.Dt UCOREDEV 4
+.Os
+.Sh NAME
+.Nm ucoredev
+.Nd "user coredump extraction interface"
+.Sh SYNOPSIS
+To load the driver as a module at boot time, place the following line in
+.Xr loader.conf 5 :
+.Bd -literal -offset indent
+ucoredev_load="YES"
+.Ed
+.Pp
+Note that
+.Xr ucored 8
+will attempt to autoload
+.Nm
+when it starts, if it has not been loaded.
+.Sh DESCRIPTION
+The
+.Nm
+device is used to extract user coredumps from the kernel.
+When
+.Nm
+is loaded, it uses the
+.Xr coredumper_register 9
+interface to claim all coredump collection.
+When a user process subsequently dumps core,
+.Nm
+processes it and writes that into a shared memory object for later extraction.
+.Pp
+A
+.Xr read 2
+from
+.Nm
+will then materialize that coredump into a shmfd, as if the process reading had
+called
+.Xr shm_open 2
+itself to create an anonymous shared memory object.
+.Nm
+does not retain any references to the coredump after it has been
+.Xr read 2
+from the device, so a subsequent
+.Xr close 2
+will discard the coredump entirely if it has not been persisted to disk by the
+reader.
+.Pp
+Note that
+.Nm
+will create and return as many file descriptors as will fit into the buffer
+provided.
+If it fails to create a file descriptor,
+.Nm
+will retain the core until a subsequent
+.Xr read 2
+in case the failure was a transient condition.
+.Ss PROTOCOL
+The
+.Nm
+device will frame coredumps with its own header for various metadata that it
+collects about the process that was dumped.
+The data structures in
+.In ucoredev.h
+should be used to process the coredump.
+.Pp
+Each shm object will begin with a
+.Vt "struct ucore" ,
+which records all of the numeric properties that are necessary for every
+coredump.
+The
+.Va ucore_datasegs
+member describes how many
+.Vt "struct ucore_data"
+segments will follow.
+The size of the coredump is encoded in
+.Va ucore_size
+for convenience, so that one need not parse through all of the data segments to
+get to the data.
+.Pp
+Data segments are mostly used for string properties of the jail.
+Each segment begins with a
+.Vt "struct ucore_data_hdr"
+that describes the type of data, and the size of the data that will follow.
+The
+.Va uhdr_size
+does not include the size of the header itself.
+.Pp
+Note that the header may be padded more than expected to align the
+.Va ud_data
+element sufficiently for any data that we may want to extract and
+.Va ud_data
+is a VLA, so
+.Fn sizeof "struct ucore_data"
+describes the position of the data relative to the struct before it more
+accurately than
+.Fn sizeof "struct ucore_data_hdr"
+would.
+.Pp
+Metadata ends at the last data segment, only the coredump itself follows.
+.Sh SEE ALSO
+.Xr shm_open 2 ,
+.Xr coredumper_register 9
