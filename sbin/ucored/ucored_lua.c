@@ -206,6 +206,7 @@ ucored_lua_execute(lua_State *L)
 	while ((wpid = waitpid(childpid, &status, 0)) != childpid) {
 		int serrno = errno;
 
+		assert(wpid == -1);
 		if (serrno == EINTR)
 			continue;
 		luaL_pushfail(L);
@@ -352,7 +353,7 @@ ucored_lua_mkpath(lua_State *L)
 
 	if (failed) {
 		luaL_pushfail(L);
-		lua_pushstring(L, strerror(errno));
+		lua_pushstring(L, strerror(serrno));
 		return (2);
 	}
 
@@ -627,10 +628,8 @@ ucored_ucore_move(lua_State *L)
 	 * and can't execute the entire filter chain properly.
 	 */
 	newpath = strdup(path);
-	if (newpath == NULL) {
-		serrno = errno;
+	if (newpath == NULL)
 		goto err;
-	}
 
 	up = self->up;
 	hdr = (*up->p_fetch_header)(up);
@@ -676,6 +675,7 @@ ucored_ucore_move(lua_State *L)
 		 * trick to pull.
 		 */
 		if (errno == EMLINK) {
+			free(newpath);
 			luaL_pushfail(L);
 			lua_pushstring(L,
 			    "security: refusing to follow source symlink");
@@ -723,11 +723,13 @@ ucored_ucore_move(lua_State *L)
 			goto err;
 
 		if (S_ISLNK(sb_to.st_mode)) {
+			free(newpath);
 			luaL_pushfail(L);
 			lua_pushstring(L,
 			    "security: refusing to follow destination symlink");
 			return (2);
 		} else if (sb_to.st_uid != uid) {
+			free(newpath);
 			luaL_pushfail(L);
 			lua_pushstring(L,
 			    "security: refusing to clobber another user's core");
@@ -761,7 +763,6 @@ ucored_ucore_move(lua_State *L)
 		goto err;
 
 	if (!libucore_copy_file(fromfd, tofd, coresize)) {
-		free(newpath);
 		goto err;
 	}
 
@@ -899,7 +900,7 @@ ucored_ucore_pipe(lua_State *L)
 	}
 
 	corefd = ucored_open_core(self, true);
-	if (corefd == -1) {
+	if (corefd < 0) {
 		int serrno = errno;
 
 		luaL_pushfail(L);
@@ -970,6 +971,7 @@ ucored_ucore_pipe(lua_State *L)
 	while ((wpid = waitpid(childpid, &status, 0)) != childpid) {
 		int serrno = errno;
 
+		assert(wpid == -1);
 		if (serrno == EINTR)
 			continue;
 		luaL_pushfail(L);

@@ -20,6 +20,12 @@
 
 static size_t ucored_client_lowat(struct ucore_readable *ur);
 
+enum ucored_state {
+	STATE_HDR = 0,
+	STATE_DATASEGS,
+	STATE_DONE,
+};
+
 struct ucored_client {
 	struct ucore_readable			cl_readable;
 	struct ucore_provider			cl_provider;
@@ -62,9 +68,8 @@ ucored_client_fetch(struct ucore_readable *ur, size_t avail, bool eof)
 {
 	struct ucored_client *cl = UCORED_CLIENT_FROM_READABLE(ur);
 	struct ucore_data_hdr datahdr;
-	size_t wanted;
 
-	while (avail >= (wanted = ucored_client_lowat(ur))) {
+	while (avail >= ucored_client_lowat(ur)) {
 		void *buf;
 		size_t bufsz;
 
@@ -76,7 +81,6 @@ ucored_client_fetch(struct ucore_readable *ur, size_t avail, bool eof)
 		if (ucored_terminate)
 			return (false);
 
-		assert(cl->cl_state != STATE_DONE);
 		switch (cl->cl_state) {
 		case STATE_HDR:
 			libucore_log(LOG_DEBUG, "Reading client header");
@@ -111,7 +115,6 @@ ucored_client_fetch(struct ucore_readable *ur, size_t avail, bool eof)
 			/* Validate the header we received. */
 			libucore_log(LOG_DEBUG, "Validating header");
 
-			buf = &cl->cl_hdr;
 			if (memcmp(cl->cl_hdr.ucore_magic, UCORE_MAGIC,
 			    sizeof(cl->cl_hdr.ucore_magic)) != 0) {
 				libucore_log(LOG_ERR, "bad magic -- closing connection");

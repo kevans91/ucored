@@ -18,12 +18,6 @@
 
 #define	UCORED_TIMEOUT	60	/* Seconds */
 
-enum ucored_state {
-	STATE_HDR = 0,
-	STATE_DATASEGS,
-	STATE_DONE,
-};
-
 struct ucored_client_data {
 	SLIST_ENTRY(ucored_client_data)	cl_entry;
 	struct ucore_data		cl_data;
