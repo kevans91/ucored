@@ -436,7 +436,7 @@ ucored_client_purge_inactive(void)
 		if (inactive.tv_sec >= UCORED_TIMEOUT) {
 
 			libucore_log(LOG_INFO, "purged client inactive for %jd seconds\n",
-			    inactive.tv_sec);
+			    (uintmax_t)inactive.tv_sec);
 
 			/*
 			 * Do not ack an inactive client; who knows what that will do.
