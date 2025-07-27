@@ -82,11 +82,14 @@ do_write(struct shmfd *shmfd, off_t offset, const void *data, size_t *datasz,
 
 static int
 coredump_shminit(const struct coredump_writer *cdw,
-    const struct coredump_params *cdp __unused, int compression)
+    const struct coredump_params *cdp)
 {
 	struct coredump_ucore_ctx *uctx = cdw->ctx;
 
-	uctx->compression = compression;
+	if (cdp->comp == NULL)
+		uctx->compression = 0;
+	else
+		uctx->compression = compressor_format(cdp->comp);
 	return (0);
 }
 

@@ -167,7 +167,6 @@ ucoredev_read(struct cdev *dev __unused, struct uio *uio, int flags)
 			if (out > 0)
 				error = 0;
 
-			printf("%s: shm_open2 error == %d\n", __func__, error);
 			break;
 		}
 
