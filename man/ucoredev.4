@@ -3,7 +3,7 @@
 .\"
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
-.Dd July 26, 2025
+.Dd July 27, 2025
 .Dt UCOREDEV 4
 .Os
 .Sh NAME
@@ -67,6 +67,10 @@ collects about the process that was dumped.
 The data structures in
 .In ucoredev.h
 should be used to process the coredump.
+It is expected that a process would
+.Xr mmap 2
+the shm fd that is returned and map out the header, data segments, and coredump
+data there.
 .Pp
 Each shm object will begin with a
 .Vt "struct ucore" ,
