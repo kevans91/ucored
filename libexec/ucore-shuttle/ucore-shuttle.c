@@ -180,7 +180,11 @@ ucored_send(int ucored, int jid, int ppid, int pid, int signo,
 		/*
 		 * We send the header and payload separate in case we have a
 		 * payload that trends towards the larger size of the maximum
-		 * segment size.
+		 * segment size.  The receiving side, which should be ucored(8),
+		 * should note this difference between ucoredev(4) and receiving
+		 * from a ucore-shuttle, the former of which expects the shmfd
+		 * to just be memory mapped and worked on there (thus, may have
+		 * padding between the header and data).
 		 */
 		ud = &sd->sd_data;
 		if (!libucore_send_data(ucored, &ud->ud_hdr,
