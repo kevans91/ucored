@@ -17,6 +17,18 @@ struct ucore_dev;
 struct ucore_provider;
 struct ucore_readable;
 
+struct ucore_ack {
+	char		ucore_magic[sizeof(UCORE_MAGIC) - 1];
+	/*
+	 * I'm not creative enough to know what else to stash here, so we'll
+	 * just stuff a bunch of padding in it for now.
+	 */
+	int64_t		ucore_pad1[4];
+	int32_t		ucore_pad2[4];
+	int32_t		ucore_status;
+	int8_t		ucore_pad3[4];
+};
+
 /* Fetches data described by the type, if available.  Returns NULL otherwise. */
 typedef const struct ucore_data *
     ucore_fetch_data_fn(const struct ucore_provider *, enum ucore_data_type);
