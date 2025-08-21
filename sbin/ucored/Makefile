@@ -33,4 +33,8 @@ CFLAGS+=	-I${SRCTOP}/kmod
 LDADD+=	-lutil ${LUALIB} ${LIBUCORE}
 DPADD+=	-lutil ${LUALIB} ${LIBUCORE}
 
+# liblua dependencies (because we're statically linked)
+LDADD+=	-lm
+DPADD+=	-lm
+
 .include <bsd.prog.mk>

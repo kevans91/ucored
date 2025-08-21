@@ -12,4 +12,8 @@ CFLAGS+=	-I${SRCTOP}/kmod
 LDADD+=	-ljail -lmagic ${LIBUCORE}
 DPADD+=	-ljail -lmagic ${LIBUCORE}
 
+# libmagic dependencies (because we're statically linked)
+LDADD+=	-lz
+DPADD+=	-lz
+
 .include <bsd.prog.mk>
