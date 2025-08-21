@@ -3,7 +3,7 @@
 .\"
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
-.Dd July 23, 2025
+.Dd August 20, 2025
 .Dt UCORED 8
 .Os
 .Sh NAME
@@ -11,7 +11,7 @@
 .Nd process and filter userland coredump files
 .Sh SYNOPSIS
 .Nm
-.Op Fl dv
+.Op Fl dLv
 .Op Fl p Ar pidfile
 .Sh DESCRIPTION
 The
@@ -37,6 +37,21 @@ or
 The
 .Fl d
 option does not imply any extra verbosity.
+.It Fl L
+Do not load
+.Xr ucoredev 4
+if it is not already loaded at startup.
+.Nm
+will otherwise try to load it and take over coredumps for the entire system.
+This option implies a fallback to using
+.Xr devd 8
+notfications to hoover up coredumps if the module was not previously loaded.
+.Pp
+The
+.Fl L
+option has no effect if
+.Xr ucoredev 4
+does not exist.
 .It Fl p Ar pidfile
 Write the
 .Nm

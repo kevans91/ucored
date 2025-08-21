@@ -226,12 +226,15 @@ main(int argc, char *argv[])
 	struct ucore_dev *udev = NULL;
 	struct ucored_server *userv = NULL;
 	int ch, error = 1, devctl_prev, kq = -1, sock = -1, verbose = 0;
-	bool debug = false, socket_initiated;
+	bool debug = false, loadkmod = true, socket_initiated;
 
-	while ((ch = getopt(argc, argv, "dp:v")) != -1) {
+	while ((ch = getopt(argc, argv, "dLp:v")) != -1) {
 		switch (ch) {
 		case 'd':
 			debug = true;
+			break;
+		case 'L':
+			loadkmod = false;
 			break;
 		case 'p':
 			pidfile = optarg;
@@ -294,7 +297,7 @@ main(int argc, char *argv[])
 		/*
 		 * XXX Should the socket and device be mutually exclusive?
 		 */
-		if (libucore_dev_available(true)) {
+		if (libucore_dev_available(loadkmod)) {
 			udev = libucore_dev_open(ucored_lua_handle);
 			if (udev == NULL) {
 				libucore_log(LOG_ERR, "failed to open /dev/ucore");
