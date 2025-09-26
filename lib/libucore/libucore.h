@@ -6,10 +6,21 @@
 
 #pragma once
 
+#include <sys/param.h>
+
 #include <stdbool.h>
 #include <syslog.h>
 
 #include "ucoredev.h"
+
+#if __FreeBSD_version < 1402504
+/* <assert.h> */
+#ifdef NDEBUG
+#define	__assert_unreachable()	__unreachable()
+#else
+#define	__assert_unreachable()	assert(0 && "unreachable segment reached")
+#endif
+#endif
 
 #define	PATH_UCORED_SOCK	"/var/run/ucored.sock"
 
