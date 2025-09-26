@@ -1,20 +1,15 @@
 SUBDIR_PARALLEL=
 
-SYSDIR?=	/usr/src/sys
+.include "Makefile.inc"
 
-.if exists(${SYSDIR}/sys/param.h)
-OSVERSION!=	awk '/^\#define[[:space:]]+__FreeBSD_version/ {print $$3}' \
-    ${SYSDIR}/sys/param.h
-.else
-OSVERSION?=	0
-.endif
-
+.if !make(install)
 SUBDIR+=	lib
 SUBDIR+=	.WAIT
+.endif
 
 SUBDIR+=	devd
 SUBDIR+=	examples
-.if ${OSVERSION} >= 1500055
+.if ${KMOD_BUILD:Uno} != "no"
 SUBDIR+=	kmod
 .endif
 SUBDIR+=	libexec
